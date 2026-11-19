@@ -26,7 +26,7 @@ Copy-Item .env.example .env
 docker compose -f docker-compose.dev.yml up -d
 ```
 
-### 3. 启动后端 FastAPI
+### 3. 启动后端 FastAPI（默认端口 8100）
 ```powershell
 cd backend
 python -m venv .venv
@@ -45,10 +45,16 @@ pytest
 python -m scripts.check_keys
 ```
 
-### 4. 启动前端 Next.js
+### 4. 启动前端 Next.js（默认端口 3100）
+方式 A（本机已安装 Node.js 20+）：
 ```powershell
 cd frontend
 npm install
 npm run dev
 ```
-打开浏览器访问 `http://localhost:3000` 查看系统探针与架构控制台。
+
+方式 B（本机未装 Node.js，直接用 Docker 一键启动前端）：
+```powershell
+docker compose -f docker-compose.dev.yml --profile web up -d --build frontend
+```
+打开浏览器访问 `http://localhost:3100` 查看系统探针与架构控制台（Phoenix 面板位于 `http://localhost:6007`）。

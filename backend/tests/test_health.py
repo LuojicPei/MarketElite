@@ -50,7 +50,7 @@ def test_health_endpoint_masks_secrets_and_reports_components(monkeypatch) -> No
                 return_value={
                     "status": "up",
                     "latency_ms": 2.4,
-                    "ui_url": "http://localhost:6006",
+                    "ui_url": "http://localhost:6007",
                     "detail": "HTTP 200",
                 }
             ),

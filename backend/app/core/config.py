@@ -24,18 +24,18 @@ class Settings(BaseSettings):
     app_env: str = "development"
     log_level: str = "INFO"
     api_host: str = "0.0.0.0"
-    api_port: int = 8000
-    cors_origins: str = "http://localhost:3000"
+    api_port: int = 8100
+    cors_origins: str = "http://localhost:3100"
 
-    # PostgreSQL & Redis
-    database_url: str = "postgresql+psycopg://marketelite:marketelite_dev@localhost:5432/marketelite"
-    checkpoint_db_uri: str = "postgresql://marketelite:marketelite_dev@localhost:5432/marketelite?sslmode=disable"
-    redis_url: str = "redis://localhost:6379/0"
+    # PostgreSQL & Redis (conflict-free host ports)
+    database_url: str = "postgresql+psycopg://marketelite:marketelite_dev@localhost:5433/marketelite"
+    checkpoint_db_uri: str = "postgresql://marketelite:marketelite_dev@localhost:5433/marketelite?sslmode=disable"
+    redis_url: str = "redis://localhost:6380/0"
 
     # Observability
     enable_telemetry: bool = True
-    phoenix_collector_endpoint: str = "http://localhost:6006/v1/traces"
-    phoenix_ui_url: str = "http://localhost:6006"
+    phoenix_collector_endpoint: str = "http://localhost:6007/v1/traces"
+    phoenix_ui_url: str = "http://localhost:6007"
 
     # External Market Data APIs
     alpaca_api_key: str = Field(default="", repr=False)

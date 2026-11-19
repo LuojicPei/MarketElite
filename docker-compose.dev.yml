@@ -8,7 +8,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-marketelite_dev}
       POSTGRES_DB: ${POSTGRES_DB:-marketelite}
     ports:
-      - "5432:5432"
+      - "5433:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./infra/postgres/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
@@ -24,7 +24,7 @@ services:
     restart: unless-stopped
     command: redis-server --appendonly yes
     ports:
-      - "6379:6379"
+      - "6380:6379"
     volumes:
       - redis_data:/data
     healthcheck:
@@ -38,12 +38,23 @@ services:
     container_name: marketelite-phoenix
     restart: unless-stopped
     ports:
-      - "6006:6006"
-      - "4317:4317"
+      - "6007:6006"
+      - "4318:4317"
     volumes:
       - phoenix_data:/mnt/data
     environment:
       PHOENIX_WORKING_DIR: /mnt/data
+
+  frontend:
+    profiles: ["web"]
+    build:
+      context: ./frontend
+      args:
+        NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:8100}
+    container_name: marketelite-frontend
+    restart: unless-stopped
+    ports:
+      - "3100:3000"
 
 volumes:
   postgres_data:
