@@ -12,12 +12,11 @@ import {
   Eye,
   GitBranch,
   Layers,
-  Play,
   Pause,
+  Play,
   RefreshCw,
   ServerCrash,
   ShieldAlert,
-  Sparkles,
   Terminal,
   Zap,
 } from "lucide-react";
@@ -124,12 +123,22 @@ const STAGE_MOCK_FLOW: Record<
   },
 };
 
-function StatusDot({ status }: { status: "up" | "down" | "disabled" | "standby" }) {
+function handleSpotlightMove(e: React.MouseEvent<HTMLElement>) {
+  const rect = e.currentTarget.getBoundingClientRect();
+  e.currentTarget.style.setProperty("--mx", `${e.clientX - rect.left}px`);
+  e.currentTarget.style.setProperty("--my", `${e.clientY - rect.top}px`);
+}
+
+function StatusDot({
+  status,
+}: {
+  status: "up" | "down" | "disabled" | "standby";
+}) {
   const styles = {
-    up: "bg-bull",
-    down: "bg-bear",
-    disabled: "bg-slate-500",
-    standby: "bg-caution",
+    up: "bg-emerald-500",
+    down: "bg-rose-500",
+    disabled: "bg-zinc-400",
+    standby: "bg-amber-500",
   }[status];
 
   return (
@@ -143,60 +152,100 @@ function StatusDot({ status }: { status: "up" | "down" | "disabled" | "standby" 
   );
 }
 
-function InfraCard({
+function InfraBlock({
   title,
   subtitle,
   icon: Icon,
   health,
+  variant,
   delay,
 }: {
   title: string;
   subtitle: string;
   icon: React.ElementType;
   health?: ComponentHealth;
+  variant: "black" | "white";
   delay: number;
 }) {
+  const isDark = variant === "black";
   const status = health?.status ?? "down";
   const badgeText =
     status === "up" ? "ONLINE" : status === "disabled" ? "DISABLED" : "OFFLINE";
-  const badgeClass =
+
+  const statusTextColor =
     status === "up"
-      ? "border-bull/30 bg-bull/10 text-bull"
+      ? isDark
+        ? "text-emerald-400"
+        : "text-emerald-700"
       : status === "disabled"
-      ? "border-white/10 bg-white/5 text-slate-400"
-      : "border-bear/30 bg-bear/10 text-bear";
+      ? "text-zinc-400"
+      : isDark
+      ? "text-rose-400"
+      : "text-rose-600";
 
   return (
     <motion.div
       initial={{ opacity: 0, y: 12 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.45, delay, ease: EASE_EXPO }}
-      className="glass-panel rounded-xl p-4 transition-colors duration-200 hover:border-white/[0.14]"
+      onMouseMove={handleSpotlightMove}
+      className={`${
+        isDark ? "velvet-black-block text-zinc-100" : "velvet-white-block text-zinc-900"
+      } rounded-2xl p-5 flex flex-col justify-between transition-transform duration-300 hover:-translate-y-0.5`}
     >
       <div className="flex items-start justify-between gap-3">
         <div className="flex items-center gap-3">
-          <div className="flex h-9 w-9 items-center justify-center rounded-lg border border-white/10 bg-obsidian-950/90 text-signal">
+          <div
+            className={`flex h-9 w-9 items-center justify-center rounded-xl border ${
+              isDark
+                ? "border-white/15 bg-white/[0.06] text-white"
+                : "border-zinc-200 bg-zinc-50 text-zinc-900"
+            }`}
+          >
             <Icon className="h-4 w-4" />
           </div>
           <div>
-            <h3 className="text-sm font-semibold tracking-tight text-slate-100">{title}</h3>
-            <p className="text-xs text-slate-400">{subtitle}</p>
+            <h3
+              className={`text-sm font-semibold tracking-tight ${
+                isDark ? "text-white" : "text-zinc-950"
+              }`}
+            >
+              {title}
+            </h3>
+            <p className={`text-xs ${isDark ? "text-zinc-400" : "text-zinc-500"}`}>
+              {subtitle}
+            </p>
           </div>
         </div>
 
         <span
-          className={`inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 font-mono text-[11px] font-medium ${badgeClass}`}
+          className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 font-mono text-[11px] font-medium ${
+            isDark
+              ? "border-white/15 bg-white/[0.05]"
+              : "border-zinc-200 bg-zinc-50"
+          } ${statusTextColor}`}
         >
           <StatusDot status={status} />
           {badgeText}
         </span>
       </div>
 
-      <div className="mt-4 flex items-center justify-between border-t border-white/[0.06] pt-3 text-xs">
-        <span className="truncate font-mono text-slate-400" title={health?.detail}>
-          {health?.detail || "Awaiting backend telemetry..."}
+      <div
+        className={`mt-5 flex items-center justify-between border-t pt-3 text-xs ${
+          isDark ? "border-white/10" : "border-zinc-200"
+        }`}
+      >
+        <span
+          className={`truncate font-mono ${isDark ? "text-zinc-400" : "text-zinc-500"}`}
+          title={health?.detail}
+        >
+          {health?.detail || "Awaiting backend probe..."}
         </span>
-        <span className="ml-2 shrink-0 font-mono tabular-nums text-slate-300">
+        <span
+          className={`ml-2 shrink-0 font-mono font-medium tabular-nums ${
+            isDark ? "text-white" : "text-zinc-950"
+          }`}
+        >
           {health ? `${health.latency_ms.toFixed(1)} ms` : "-- ms"}
         </span>
       </div>
@@ -206,7 +255,9 @@ function InfraCard({
           href={health.ui_url}
           target="_blank"
           rel="noreferrer"
-          className="mt-2.5 inline-flex items-center gap-1 text-xs font-medium text-signal transition-colors hover:text-sky-300"
+          className={`mt-2.5 inline-flex items-center gap-1 text-xs font-medium transition-opacity hover:opacity-75 ${
+            isDark ? "text-white" : "text-zinc-950"
+          }`}
         >
           打开 Phoenix Trace 面板
           <ArrowUpRight className="h-3.5 w-3.5" />
@@ -251,7 +302,6 @@ export default function StatusConsole() {
     probeSystem();
   }, [probeSystem]);
 
-  // Smooth auto-play pipeline flow preview
   useEffect(() => {
     if (!autoPlay || activeTab !== "choreography") return;
     const timer = setInterval(() => {
@@ -284,30 +334,30 @@ export default function StatusConsole() {
 
   return (
     <div className="min-h-screen flex flex-col">
-      {/* Top Glass Command Bar */}
-      <header className="sticky top-0 z-30 border-b border-white/[0.07] bg-obsidian-950/80 backdrop-blur-xl">
+      {/* Gallery Minimal Top Bar */}
+      <header className="sticky top-0 z-30 border-b border-zinc-200/80 bg-[#F6F6F3]/85 backdrop-blur-xl">
         <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-4 px-5 py-3.5">
           <div className="flex items-center gap-3">
-            <div className="relative flex h-9 w-9 items-center justify-center rounded-lg border border-signal/30 bg-signal/10 text-signal shadow-glow">
+            <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-obsidian-950 text-white shadow-sm">
               <Activity className="h-[18px] w-[18px]" />
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <span className="text-base font-bold tracking-tight text-white">
+                <span className="font-serif text-xl tracking-tight text-zinc-950">
                   MarketElite
                 </span>
-                <span className="rounded border border-white/10 bg-white/[0.04] px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wider text-slate-400">
-                  Phase 0 · Foundation
+                <span className="rounded-full border border-zinc-300 bg-white px-2 py-0.5 font-mono text-[10px] uppercase tracking-wider text-zinc-600">
+                  Phase 0
                 </span>
               </div>
-              <p className="text-xs text-slate-400">
-                US Equity Structure &amp; Multi-Agent Risk Workstation
+              <p className="text-xs text-zinc-500">
+                US Equity Structure &amp; Multi-Agent Risk Terminal
               </p>
             </div>
           </div>
 
-          {/* Sliding Segmented Navigation */}
-          <div className="flex items-center rounded-lg border border-white/[0.08] bg-obsidian-900/90 p-1">
+          {/* Monochrome Sliding Segmented Switch */}
+          <div className="flex items-center rounded-full border border-zinc-200 bg-white p-1 shadow-sm">
             {(
               [
                 { id: "telemetry", label: "系统健康探针", icon: Cpu },
@@ -321,15 +371,15 @@ export default function StatusConsole() {
                   key={tab.id}
                   type="button"
                   onClick={() => setActiveTab(tab.id)}
-                  className={`relative flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
-                    isActive ? "text-white" : "text-slate-400 hover:text-slate-200"
+                  className={`relative flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-xs font-medium transition-colors ${
+                    isActive ? "text-white" : "text-zinc-500 hover:text-zinc-950"
                   }`}
                 >
                   {isActive && (
                     <motion.span
                       layoutId="active-nav-pill"
                       transition={{ type: "spring", stiffness: 420, damping: 32 }}
-                      className="absolute inset-0 rounded-md border border-white/10 bg-white/[0.08] shadow-hairline"
+                      className="absolute inset-0 rounded-full bg-obsidian-950"
                     />
                   )}
                   <Icon className="relative z-10 h-3.5 w-3.5" />
@@ -339,13 +389,13 @@ export default function StatusConsole() {
             })}
           </div>
 
-          {/* Live Status & Re-probe Trigger */}
+          {/* Status & Jet-Black Re-probe Trigger */}
           <div className="flex items-center gap-2.5">
-            <div className="flex items-center gap-2 rounded-lg border border-white/[0.08] bg-obsidian-900/80 px-3 py-1.5 font-mono text-xs">
+            <div className="flex items-center gap-2 rounded-full border border-zinc-200 bg-white px-3 py-1.5 font-mono text-xs shadow-sm">
               <StatusDot status={overallStatus.tone} />
-              <span className="text-slate-200">{overallStatus.label}</span>
+              <span className="font-medium text-zinc-900">{overallStatus.label}</span>
               {roundTripMs !== null && (
-                <span className="border-l border-white/10 pl-2 tabular-nums text-slate-400">
+                <span className="border-l border-zinc-200 pl-2 tabular-nums text-zinc-500">
                   {roundTripMs} ms
                 </span>
               )}
@@ -355,16 +405,16 @@ export default function StatusConsole() {
               type="button"
               onClick={probeSystem}
               disabled={loading}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/[0.05] px-3 py-1.5 text-xs font-medium text-slate-200 transition-all hover:border-signal/40 hover:bg-signal/10 hover:text-white active:scale-[0.98] disabled:opacity-50"
+              className="inline-flex items-center gap-1.5 rounded-full bg-obsidian-950 px-4 py-1.5 text-xs font-medium text-white shadow-sm transition-all hover:bg-zinc-800 active:scale-[0.98] disabled:opacity-50"
             >
-              <RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin text-signal" : ""}`} />
+              <RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
               刷新探针
             </button>
           </div>
         </div>
       </header>
 
-      {/* Main Content */}
+      {/* Main Gallery Stage */}
       <main className="mx-auto w-full max-w-6xl flex-1 px-5 py-7">
         <AnimatePresence mode="wait">
           {activeTab === "telemetry" ? (
@@ -374,66 +424,69 @@ export default function StatusConsole() {
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -8 }}
               transition={{ duration: 0.28, ease: EASE_EXPO }}
-              className="space-y-6"
+              className="space-y-5"
             >
-              {/* Standby Notice if FastAPI is not started yet */}
+              {/* Standby Banner if FastAPI isn't started yet */}
               {apiError && (
                 <motion.div
                   initial={{ opacity: 0, scale: 0.99 }}
                   animate={{ opacity: 1, scale: 1 }}
-                  className="glass-panel flex flex-col justify-between gap-4 rounded-xl border-caution/30 p-4 sm:flex-row sm:items-center"
+                  className="velvet-white-block flex flex-col justify-between gap-4 rounded-2xl border-amber-300/70 p-4 sm:flex-row sm:items-center"
                 >
                   <div className="flex items-start gap-3">
-                    <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-caution/30 bg-caution/10 text-caution">
+                    <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-amber-50 text-amber-700 border border-amber-200">
                       <ServerCrash className="h-4 w-4" />
                     </div>
                     <div>
-                      <h2 className="text-sm font-semibold text-amber-200">
+                      <h2 className="text-sm font-semibold text-zinc-950">
                         后端 FastAPI 探针暂未连接 ({apiError})
                       </h2>
-                      <p className="mt-0.5 text-xs text-slate-400">
-                        请先启动本地 Docker 基础设施与后端服务，页面即可实时采集 PostgreSQL / Redis / Phoenix 与密钥就绪状态。
+                      <p className="mt-0.5 text-xs text-zinc-500">
+                        请启动本地后端服务，页面即可实时采集 PostgreSQL / Redis / Phoenix 与密钥就绪状态。
                       </p>
                     </div>
                   </div>
-                  <div className="shrink-0 rounded-lg border border-white/10 bg-obsidian-950 px-3 py-2 font-mono text-xs text-slate-300">
-                    docker compose -f docker-compose.dev.yml up -d
+                  <div className="shrink-0 rounded-xl bg-obsidian-950 px-3.5 py-2 font-mono text-xs text-zinc-100">
+                    cd backend &amp;&amp; .\.venv\Scripts\python.exe run.py
                   </div>
                 </motion.div>
               )}
 
-              {/* Hero Telemetry Summary Strip */}
-              <div className="glass-panel rounded-xl p-5">
-                <div className="flex flex-col justify-between gap-4 md:flex-row md:items-center">
-                  <div className="space-y-1">
-                    <div className="inline-flex items-center gap-1.5 text-xs font-medium text-signal">
-                      <Sparkles className="h-3.5 w-3.5" />
-                      <span>Phase 0 · 底座连通性与密钥安全验证</span>
+              {/* Hero Block: Deep Obsidian Velvet Black Anchor */}
+              <div
+                onMouseMove={handleSpotlightMove}
+                className="velvet-black-block rounded-2xl p-6 text-zinc-100"
+              >
+                <div className="flex flex-col justify-between gap-5 md:flex-row md:items-center">
+                  <div className="space-y-1.5">
+                    <div className="font-mono text-[11px] uppercase tracking-widest text-zinc-400">
+                      SYSTEM READINESS // LIGHT SILK × MONOCHROME
                     </div>
-                    <h1 className="text-xl font-bold tracking-tight text-white">
+                    <h1 className="font-serif text-3xl tracking-tight text-white">
                       工程基础设施实时遥测台
                     </h1>
-                    <p className="text-xs text-slate-400">
-                      前端样式基线、PostgreSQL (pgvector)、Redis 缓存锁及 Arize Phoenix 可观测性探针已接入；密钥仅在服务端脱敏校验，绝不回传明文。
+                    <p className="max-w-2xl text-xs leading-relaxed text-zinc-400">
+                      前端已采用「白底丝绒 × 黑白相间组件」视觉基线；PostgreSQL (pgvector)、Redis 缓存锁及 Arize Phoenix 可观测探针均已就绪，敏感密钥严格保留在服务端脱敏校验。
                     </p>
                   </div>
 
-                  <div className="w-full shrink-0 rounded-xl border border-white/[0.07] bg-obsidian-950/70 p-3.5 md:w-72">
+                  {/* Nested Crisp White Metric Inset inside Black Hero */}
+                  <div className="w-full shrink-0 rounded-xl bg-white p-4 text-zinc-900 shadow-sm md:w-72">
                     <div className="flex items-center justify-between text-xs">
-                      <span className="text-slate-400">外部数据源与 LLM 就绪度</span>
-                      <span className="font-mono font-semibold tabular-nums text-white">
+                      <span className="font-medium text-zinc-600">数据源与 LLM 就绪度</span>
+                      <span className="font-mono font-bold tabular-nums text-zinc-950">
                         {readinessStats.ready} / {readinessStats.total}
                       </span>
                     </div>
-                    <div className="mt-2 h-2 w-full overflow-hidden rounded-full bg-white/[0.06]">
+                    <div className="mt-2.5 h-2 w-full overflow-hidden rounded-full bg-zinc-200">
                       <motion.div
                         initial={{ width: 0 }}
                         animate={{ width: `${readinessStats.pct}%` }}
                         transition={{ duration: 0.7, ease: EASE_EXPO }}
-                        className="h-full rounded-full bg-gradient-to-r from-signal to-bull"
+                        className="h-full rounded-full bg-obsidian-950"
                       />
                     </div>
-                    <div className="mt-2 flex items-center justify-between font-mono text-[11px] text-slate-500">
+                    <div className="mt-2.5 flex items-center justify-between font-mono text-[11px] text-zinc-500">
                       <span>{health?.env?.toUpperCase() || "LOCAL"}</span>
                       <span className="tabular-nums">
                         {health?.checked_at
@@ -445,84 +498,159 @@ export default function StatusConsole() {
                 </div>
               </div>
 
-              {/* 3 Core Infrastructure Cards */}
+              {/* Alternating White / Black / White Infrastructure Row */}
               <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-                <InfraCard
+                <InfraBlock
                   title="PostgreSQL 16 + pgvector"
                   subtitle="业务账本 / Checkpoint / SEC 混合 RAG"
                   icon={Database}
                   health={health?.components.postgres}
+                  variant="white"
                   delay={0.05}
                 />
-                <InfraCard
+                <InfraBlock
                   title="Redis 7 Store"
                   subtitle="驾驶舱热缓存 / 熔断器 / 防重入锁"
                   icon={Zap}
                   health={health?.components.redis}
+                  variant="black"
                   delay={0.12}
                 />
-                <InfraCard
+                <InfraBlock
                   title="Arize Phoenix"
                   subtitle="单容器 OpenTelemetry Trace & Eval"
                   icon={Eye}
                   health={health?.components.phoenix}
+                  variant="white"
                   delay={0.19}
                 />
               </div>
 
-              {/* External Integrations Readiness Matrix */}
-              <div className="glass-panel rounded-xl p-5">
-                <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+              {/* Clean Gallery White Matrix */}
+              <div
+                onMouseMove={handleSpotlightMove}
+                className="velvet-white-block rounded-2xl p-5"
+              >
+                <div className="mb-4 flex flex-wrap items-center justify-between gap-2 border-b border-zinc-200 pb-3">
                   <div>
-                    <h2 className="text-sm font-semibold text-white">
+                    <h2 className="text-sm font-semibold text-zinc-950">
                       美股数据源与大模型网关接入矩阵
                     </h2>
-                    <p className="text-xs text-slate-400">
-                      免账号官方源开箱即用；其余只需在根目录 <code className="rounded bg-white/[0.06] px-1 py-0.5 font-mono text-slate-200">.env</code> 填入对应免费 Key 即可自动点亮。
+                    <p className="text-xs text-zinc-500">
+                      免账号官方源开箱即用；其余在根目录{" "}
+                      <code className="rounded bg-zinc-100 px-1.5 py-0.5 font-mono text-zinc-800">
+                        .env
+                      </code>{" "}
+                      填入免费 Key 即可自动点亮。
                     </p>
                   </div>
-                  <div className="inline-flex items-center gap-1.5 rounded-md border border-white/10 bg-obsidian-950/80 px-2.5 py-1 font-mono text-[11px] text-slate-400">
-                    <Terminal className="h-3 w-3 text-signal" />
+                  <div className="inline-flex items-center gap-1.5 rounded-full bg-obsidian-950 px-3 py-1 font-mono text-[11px] text-white">
+                    <Terminal className="h-3 w-3" />
                     python -m scripts.check_keys
                   </div>
                 </div>
 
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                  {(health?.integrations ?? [
-                    { id: "alpaca", name: "Alpaca Market & Paper Trading", category: "market_data", requires_key: true, configured: false, mode: "Paper" },
-                    { id: "fred", name: "FRED Macro & Liquidity", category: "macro", requires_key: true, configured: false, mode: "API Key" },
-                    { id: "finnhub", name: "Finnhub Earnings & EPS", category: "fundamentals", requires_key: true, configured: false, mode: "Free Tier" },
-                    { id: "fmp", name: "FMP Economic Calendar", category: "macro", requires_key: true, configured: false, mode: "Free Tier" },
-                    { id: "binance", name: "Binance Vision (BTCUSDT)", category: "crypto", requires_key: false, configured: true, mode: "Keyless Public" },
-                    { id: "cftc", name: "CFTC COT Socrata JSON", category: "positioning", requires_key: false, configured: true, mode: "Keyless Public" },
-                    { id: "sec_edgar", name: "SEC EDGAR (10-K / 10-Q / 8-K)", category: "rag", requires_key: false, configured: false, mode: "Header Policy" },
-                    { id: "llm_fast", name: "LLM Fast Tier", category: "llm", requires_key: true, configured: false, mode: "OpenAI-Compat" },
-                    { id: "llm_pro", name: "LLM Reasoning Tier", category: "llm", requires_key: true, configured: false, mode: "OpenAI-Compat" },
-                  ]).map((item, idx) => (
+                  {(
+                    health?.integrations ?? [
+                      {
+                        id: "alpaca",
+                        name: "Alpaca Market & Paper Trading",
+                        category: "market_data",
+                        requires_key: true,
+                        configured: false,
+                        mode: "Paper",
+                      },
+                      {
+                        id: "fred",
+                        name: "FRED Macro & Liquidity",
+                        category: "macro",
+                        requires_key: true,
+                        configured: false,
+                        mode: "API Key",
+                      },
+                      {
+                        id: "finnhub",
+                        name: "Finnhub Earnings & EPS",
+                        category: "fundamentals",
+                        requires_key: true,
+                        configured: false,
+                        mode: "Free Tier",
+                      },
+                      {
+                        id: "fmp",
+                        name: "FMP Economic Calendar",
+                        category: "macro",
+                        requires_key: true,
+                        configured: false,
+                        mode: "Free Tier",
+                      },
+                      {
+                        id: "binance",
+                        name: "Binance Vision (BTCUSDT)",
+                        category: "crypto",
+                        requires_key: false,
+                        configured: true,
+                        mode: "Keyless Public",
+                      },
+                      {
+                        id: "cftc",
+                        name: "CFTC COT Socrata JSON",
+                        category: "positioning",
+                        requires_key: false,
+                        configured: true,
+                        mode: "Keyless Public",
+                      },
+                      {
+                        id: "sec_edgar",
+                        name: "SEC EDGAR (10-K / 10-Q / 8-K)",
+                        category: "rag",
+                        requires_key: false,
+                        configured: false,
+                        mode: "Header Policy",
+                      },
+                      {
+                        id: "llm_fast",
+                        name: "LLM Fast Tier",
+                        category: "llm",
+                        requires_key: true,
+                        configured: false,
+                        mode: "OpenAI-Compat",
+                      },
+                      {
+                        id: "llm_pro",
+                        name: "LLM Reasoning Tier",
+                        category: "llm",
+                        requires_key: true,
+                        configured: false,
+                        mode: "OpenAI-Compat",
+                      },
+                    ]
+                  ).map((item, idx) => (
                     <motion.div
                       key={item.id}
                       initial={{ opacity: 0, y: 8 }}
                       animate={{ opacity: 1, y: 0 }}
                       transition={{ duration: 0.35, delay: 0.03 * idx, ease: EASE_EXPO }}
-                      className="glass-subcard flex items-center justify-between gap-3 rounded-lg p-3 transition-colors hover:border-white/[0.14]"
+                      className="flex items-center justify-between gap-3 rounded-xl border border-zinc-200/90 bg-[#FAF9F6] px-3.5 py-3 transition-colors hover:border-zinc-400"
                     >
                       <div className="min-w-0">
-                        <div className="truncate text-xs font-medium text-slate-100">
+                        <div className="truncate text-xs font-semibold text-zinc-900">
                           {item.name}
                         </div>
-                        <div className="mt-1 flex items-center gap-1.5 font-mono text-[11px] text-slate-500">
+                        <div className="mt-1 flex items-center gap-1.5 font-mono text-[11px] text-zinc-500">
                           <span>{item.mode}</span>
                           <span>·</span>
                           <span>{item.requires_key ? "API Key" : "Zero-Key"}</span>
                         </div>
                       </div>
                       {item.configured ? (
-                        <span className="inline-flex shrink-0 items-center gap-1 rounded-full border border-bull/30 bg-bull/10 px-2 py-0.5 font-mono text-[11px] text-bull">
+                        <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-obsidian-950 px-2.5 py-0.5 font-mono text-[11px] text-emerald-400">
                           <CheckCircle2 className="h-3 w-3" />
                           READY
                         </span>
                       ) : (
-                        <span className="inline-flex shrink-0 items-center rounded-full border border-caution/30 bg-caution/10 px-2 py-0.5 font-mono text-[11px] text-caution">
+                        <span className="inline-flex shrink-0 items-center rounded-full border border-zinc-300 bg-white px-2.5 py-0.5 font-mono text-[11px] text-amber-700">
                           PENDING
                         </span>
                       )}
@@ -538,30 +666,33 @@ export default function StatusConsole() {
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -8 }}
               transition={{ duration: 0.28, ease: EASE_EXPO }}
-              className="space-y-6"
+              className="space-y-5"
             >
-              {/* Choreography Header + Auto-play toggle */}
-              <div className="glass-panel flex flex-col justify-between gap-4 rounded-xl p-5 sm:flex-row sm:items-center">
+              {/* Monochrome Header Card */}
+              <div
+                onMouseMove={handleSpotlightMove}
+                className="velvet-black-block flex flex-col justify-between gap-4 rounded-2xl p-6 text-white sm:flex-row sm:items-center"
+              >
                 <div>
-                  <div className="inline-flex items-center gap-1.5 text-xs font-medium text-signal">
+                  <div className="inline-flex items-center gap-1.5 font-mono text-[11px] uppercase tracking-widest text-zinc-400">
                     <Layers className="h-3.5 w-3.5" />
                     <span>1 Deterministic Cockpit + 3 Closed-Loop Agents</span>
                   </div>
-                  <h1 className="mt-1 text-xl font-bold tracking-tight text-white">
+                  <h1 className="mt-1 font-serif text-3xl tracking-tight text-white">
                     闭环工作流编排与风控流转预览
                   </h1>
-                  <p className="mt-0.5 text-xs text-slate-400">
-                    点击下方任意环节或开启自动演示，预览 MarketElite 如何完成“数据计算 → 自主调查 → 对抗风控 → 模拟实盘 → 自我反思”。
+                  <p className="mt-1 text-xs text-zinc-400">
+                    点击下方黑白交替节点或开启自动演示，预览「数据底座 → 自主调查 → 独立风控对抗 → 模拟实盘 → 自我反思」的完整链路。
                   </p>
                 </div>
 
                 <button
                   type="button"
                   onClick={() => setAutoPlay((v) => !v)}
-                  className={`inline-flex shrink-0 items-center gap-2 rounded-lg border px-3.5 py-2 text-xs font-semibold transition-all active:scale-[0.98] ${
+                  className={`inline-flex shrink-0 items-center gap-2 rounded-full px-4 py-2 text-xs font-semibold transition-all active:scale-[0.98] ${
                     autoPlay
-                      ? "border-bull/40 bg-bull/15 text-bull"
-                      : "border-signal/35 bg-signal/10 text-signal hover:bg-signal/20"
+                      ? "bg-emerald-500 text-zinc-950"
+                      : "bg-white text-zinc-950 hover:bg-zinc-200"
                   }`}
                 >
                   {autoPlay ? (
@@ -578,8 +709,8 @@ export default function StatusConsole() {
                 </button>
               </div>
 
-              {/* 4-Stage Interactive Pipeline Track */}
-              <div className="relative grid grid-cols-1 gap-3 md:grid-cols-4">
+              {/* 4-Stage Alternating Monochrome Track */}
+              <div className="grid grid-cols-1 gap-3.5 md:grid-cols-4">
                 {stages.map((stage, index) => {
                   const isSelected = stage.id === activeStage.id;
                   const stageIcon = [Database, Bot, ShieldAlert, Eye][index] || Bot;
@@ -593,43 +724,52 @@ export default function StatusConsole() {
                         setAutoPlay(false);
                         setSelectedStageId(stage.id);
                       }}
-                      className={`group relative flex flex-col justify-between rounded-xl border p-4 text-left transition-all duration-300 ${
+                      onMouseMove={handleSpotlightMove}
+                      className={`group relative flex flex-col justify-between rounded-2xl p-4 text-left transition-all duration-300 ${
                         isSelected
-                          ? "border-signal/50 bg-obsidian-800/90 shadow-glow"
-                          : "border-white/[0.07] bg-obsidian-900/60 hover:border-white/[0.16] hover:bg-obsidian-850/70"
+                          ? "velvet-black-block text-white -translate-y-0.5"
+                          : "velvet-white-block text-zinc-900 hover:-translate-y-0.5"
                       }`}
                     >
-                      {isSelected && (
-                        <motion.div
-                          layoutId="stage-active-glow"
-                          transition={{ type: "spring", stiffness: 360, damping: 30 }}
-                          className="pointer-events-none absolute inset-0 rounded-xl border border-signal/50 bg-gradient-to-b from-signal/[0.08] to-transparent"
-                        />
-                      )}
-
-                      <div className="relative z-10 flex items-center justify-between">
-                        <span className="font-mono text-[11px] font-semibold text-signal">
+                      <div className="flex items-center justify-between">
+                        <span
+                          className={`font-mono text-[11px] font-semibold ${
+                            isSelected ? "text-zinc-300" : "text-zinc-500"
+                          }`}
+                        >
                           0{stage.order} · {stage.phase}
                         </span>
                         <div
-                          className={`flex h-7 w-7 items-center justify-center rounded-md border transition-colors ${
+                          className={`flex h-7 w-7 items-center justify-center rounded-lg border transition-colors ${
                             isSelected
-                              ? "border-signal/40 bg-signal/15 text-signal"
-                              : "border-white/10 bg-obsidian-950 text-slate-400 group-hover:text-slate-200"
+                              ? "border-white/20 bg-white/10 text-white"
+                              : "border-zinc-200 bg-zinc-50 text-zinc-700"
                           }`}
                         >
                           <StageIcon className="h-3.5 w-3.5" />
                         </div>
                       </div>
 
-                      <div className="relative z-10 mt-3">
-                        <div className="text-[11px] font-medium text-slate-400">
+                      <div className="mt-3">
+                        <div
+                          className={`text-[11px] font-medium ${
+                            isSelected ? "text-zinc-400" : "text-zinc-500"
+                          }`}
+                        >
                           {stage.tag}
                         </div>
-                        <div className="mt-0.5 text-sm font-semibold text-white">
+                        <div
+                          className={`mt-0.5 text-sm font-semibold ${
+                            isSelected ? "text-white" : "text-zinc-950"
+                          }`}
+                        >
                           {stage.title}
                         </div>
-                        <div className="mt-1 text-xs text-slate-400">
+                        <div
+                          className={`mt-1 text-xs ${
+                            isSelected ? "text-zinc-400" : "text-zinc-500"
+                          }`}
+                        >
                           {stage.subtitle}
                         </div>
                       </div>
@@ -638,7 +778,7 @@ export default function StatusConsole() {
                 })}
               </div>
 
-              {/* Animated Stage Detail Inspector */}
+              {/* Alternating Black + White Detail Inspector */}
               <AnimatePresence mode="wait">
                 <motion.div
                   key={activeStage.id}
@@ -646,34 +786,40 @@ export default function StatusConsole() {
                   animate={{ opacity: 1, y: 0 }}
                   exit={{ opacity: 0, y: -10 }}
                   transition={{ duration: 0.32, ease: EASE_EXPO }}
-                  className="glass-panel grid grid-cols-1 gap-6 rounded-xl p-6 lg:grid-cols-12"
+                  className="grid grid-cols-1 gap-4 lg:grid-cols-12"
                 >
-                  <div className="space-y-4 lg:col-span-7">
+                  {/* White Gallery Detail Panel */}
+                  <div
+                    onMouseMove={handleSpotlightMove}
+                    className="velvet-white-block space-y-4 rounded-2xl p-6 lg:col-span-7"
+                  >
                     <div className="flex flex-wrap items-center gap-2">
-                      <span className="rounded-full border border-signal/30 bg-signal/10 px-2.5 py-0.5 font-mono text-xs font-medium text-signal">
+                      <span className="rounded-full bg-obsidian-950 px-3 py-0.5 font-mono text-xs font-medium text-white">
                         {activeStage.tag}
                       </span>
-                      <span className="rounded-full border border-white/10 bg-white/[0.04] px-2.5 py-0.5 font-mono text-xs text-slate-300">
+                      <span className="rounded-full border border-zinc-300 bg-zinc-50 px-3 py-0.5 font-mono text-xs text-zinc-700">
                         目标交付：{activeStage.phase}
                       </span>
                     </div>
 
                     <div>
-                      <h2 className="text-lg font-bold text-white">{activeStage.title}</h2>
-                      <p className="mt-2 text-sm leading-relaxed text-slate-300">
+                      <h2 className="font-serif text-2xl text-zinc-950">
+                        {activeStage.title}
+                      </h2>
+                      <p className="mt-2 text-sm leading-relaxed text-zinc-600">
                         {activeStage.summary}
                       </p>
                     </div>
 
                     <div>
-                      <div className="mb-2 text-xs font-semibold uppercase tracking-wider text-slate-400">
-                        核心工程组件
+                      <div className="mb-2 font-mono text-[11px] font-semibold uppercase tracking-wider text-zinc-500">
+                        Core Engineering Components
                       </div>
                       <div className="flex flex-wrap gap-2">
                         {activeStage.components.map((comp) => (
                           <span
                             key={comp}
-                            className="rounded-md border border-white/10 bg-obsidian-950/90 px-2.5 py-1 font-mono text-xs text-slate-200"
+                            className="rounded-lg border border-zinc-200 bg-[#FAF9F6] px-2.5 py-1 font-mono text-xs text-zinc-800"
                           >
                             {comp}
                           </span>
@@ -682,39 +828,42 @@ export default function StatusConsole() {
                     </div>
                   </div>
 
-                  {/* Live Simulation Trace Card */}
-                  <div className="glass-subcard flex flex-col justify-between rounded-xl p-4 lg:col-span-5">
-                    <div className="space-y-3">
-                      <div className="flex items-center justify-between border-b border-white/[0.06] pb-2">
-                        <span className="font-mono text-xs font-semibold text-slate-200">
+                  {/* Black Obsidian Simulation Trace Panel */}
+                  <div
+                    onMouseMove={handleSpotlightMove}
+                    className="velvet-black-block flex flex-col justify-between rounded-2xl p-6 text-zinc-100 lg:col-span-5"
+                  >
+                    <div className="space-y-3.5">
+                      <div className="flex items-center justify-between border-b border-white/10 pb-2.5">
+                        <span className="font-mono text-xs font-semibold text-white">
                           SIMULATED EXECUTION TRACE
                         </span>
-                        <span className="inline-flex items-center gap-1 font-mono text-[11px] text-bull">
+                        <span className="inline-flex items-center gap-1.5 font-mono text-[11px] text-emerald-400">
                           <StatusDot status="up" />
                           GUARDED
                         </span>
                       </div>
 
                       <div>
-                        <div className="text-[11px] font-medium text-slate-400">
+                        <div className="text-[11px] font-medium text-zinc-400">
                           触发信号
                         </div>
-                        <div className="mt-1 rounded-md border border-white/[0.06] bg-obsidian-950/80 p-2 font-mono text-xs text-slate-200">
+                        <div className="mt-1 rounded-xl border border-white/10 bg-black/50 p-2.5 font-mono text-xs text-zinc-100">
                           {STAGE_MOCK_FLOW[activeStage.id]?.trigger}
                         </div>
                       </div>
 
                       <div>
-                        <div className="text-[11px] font-medium text-slate-400">
+                        <div className="text-[11px] font-medium text-zinc-400">
                           内置异常兜底与风控栅栏
                         </div>
-                        <ul className="mt-1 space-y-1">
+                        <ul className="mt-1.5 space-y-1.5">
                           {STAGE_MOCK_FLOW[activeStage.id]?.guardrails.map((g) => (
                             <li
                               key={g}
-                              className="flex items-center gap-1.5 text-xs text-slate-300"
+                              className="flex items-center gap-2 text-xs text-zinc-300"
                             >
-                              <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-bull" />
+                              <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-emerald-400" />
                               <span>{g}</span>
                             </li>
                           ))}
@@ -722,9 +871,11 @@ export default function StatusConsole() {
                       </div>
                     </div>
 
-                    <div className="mt-4 rounded-lg border border-bull/25 bg-bull/[0.07] p-2.5">
-                      <div className="text-[11px] font-semibold text-bull">阶段输出产物</div>
-                      <p className="mt-0.5 font-mono text-xs leading-relaxed text-emerald-100">
+                    <div className="mt-4 rounded-xl bg-white p-3 text-zinc-900">
+                      <div className="font-mono text-[11px] font-semibold uppercase text-emerald-700">
+                        Output Artifact
+                      </div>
+                      <p className="mt-0.5 font-mono text-xs leading-relaxed text-zinc-900">
                         {STAGE_MOCK_FLOW[activeStage.id]?.output}
                       </p>
                     </div>

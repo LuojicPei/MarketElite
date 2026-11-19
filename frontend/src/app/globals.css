@@ -4,44 +4,57 @@
 
 @layer base {
   html {
-    color-scheme: dark;
+    color-scheme: light;
   }
 
   body {
-    background-color: #06080c;
-    color: #e6edf7;
+    background-color: #f3f3f0;
+    color: #09090b;
     font-feature-settings: "cv02", "cv03", "cv04", "cv11";
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
   }
 }
 
-/* Institutional atmospheric backdrop */
-.terminal-backdrop {
-  background-color: #06080c;
+/* Gallery warm silk velvet canvas */
+.silk-velvet-backdrop {
+  background-color: #f3f3f0;
   background-image:
-    radial-gradient(ellipse 75% 45% at 50% -10%, rgba(56, 189, 248, 0.09), transparent 70%),
-    radial-gradient(ellipse 50% 35% at 85% 95%, rgba(16, 185, 129, 0.06), transparent 65%),
-    linear-gradient(to right, rgba(255, 255, 255, 0.022) 1px, transparent 1px),
-    linear-gradient(to bottom, rgba(255, 255, 255, 0.022) 1px, transparent 1px);
-  background-size: 100% 100%, 100% 100%, 44px 44px, 44px 44px;
+    radial-gradient(ellipse 85% 55% at 50% -5%, #ffffff 0%, rgba(255, 255, 255, 0) 75%),
+    radial-gradient(ellipse 60% 45% at 90% 95%, rgba(228, 228, 231, 0.55), transparent 70%);
 }
 
 .tabular-nums {
   font-variant-numeric: tabular-nums;
 }
 
-.glass-panel {
-  background: linear-gradient(180deg, rgba(16, 22, 34, 0.82) 0%, rgba(11, 15, 23, 0.92) 100%);
-  border: 1px solid rgba(255, 255, 255, 0.07);
-  box-shadow: inset 0 1px 0 0 rgba(255, 255, 255, 0.05), 0 18px 40px -24px rgba(0, 0, 0, 0.85);
-  backdrop-filter: blur(14px);
+/* Alternating Monochrome Blocks with Cursor Spotlight */
+.velvet-black-block {
+  background:
+    radial-gradient(
+      280px circle at var(--mx, 50%) var(--my, 50%),
+      rgba(255, 255, 255, 0.085),
+      transparent 72%
+    ),
+    #0b0b0d;
+  border: 1px solid #1c1c21;
+  box-shadow:
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.08),
+    0 20px 44px -22px rgba(0, 0, 0, 0.52);
 }
 
-.glass-subcard {
-  background: rgba(12, 16, 24, 0.72);
-  border: 1px solid rgba(255, 255, 255, 0.06);
-  box-shadow: inset 0 1px 0 0 rgba(255, 255, 255, 0.04);
+.velvet-white-block {
+  background:
+    radial-gradient(
+      280px circle at var(--mx, 50%) var(--my, 50%),
+      rgba(9, 9, 11, 0.035),
+      transparent 72%
+    ),
+    #ffffff;
+  border: 1px solid #e4e4e7;
+  box-shadow:
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.95),
+    0 14px 32px -20px rgba(0, 0, 0, 0.14);
 }
 
 @keyframes pulse-ring {
@@ -50,11 +63,11 @@
     opacity: 0.75;
   }
   70% {
-    transform: scale(1.7);
+    transform: scale(1.75);
     opacity: 0;
   }
   100% {
-    transform: scale(1.7);
+    transform: scale(1.75);
     opacity: 0;
   }
 }
@@ -68,18 +81,17 @@
   animation: pulse-ring 2.2s cubic-bezier(0.16, 1, 0.3, 1) infinite;
 }
 
-/* Custom slim scrollbar */
 ::-webkit-scrollbar {
   width: 6px;
   height: 6px;
 }
 ::-webkit-scrollbar-track {
-  background: #06080c;
+  background: #f3f3f0;
 }
 ::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.14);
+  background: rgba(9, 9, 11, 0.18);
   border-radius: 9999px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.25);
+  background: rgba(9, 9, 11, 0.35);
 }
