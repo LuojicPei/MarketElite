@@ -12,8 +12,10 @@ if os.name == "nt":
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 from app.api.health import router as health_router
+from app.api.market import router as market_router
 from app.core.clients import InfraManager
 from app.core.config import get_settings
+from app.db.session import create_db_engine, create_session_factory
 
 
 @asynccontextmanager
@@ -21,10 +23,14 @@ async def lifespan(app: FastAPI):
     settings = get_settings()
     infra = InfraManager(settings)
     await infra.startup()
+    db_engine = create_db_engine(settings)
     app.state.infra = infra
+    app.state.db_engine = db_engine
+    app.state.session_factory = create_session_factory(db_engine)
     try:
         yield
     finally:
+        await db_engine.dispose()
         await infra.shutdown()
 
 
@@ -46,6 +52,7 @@ def create_app() -> FastAPI:
     )
 
     app.include_router(health_router)
+    app.include_router(market_router)
     return app
 
 
