@@ -1,14 +1,18 @@
 from __future__ import annotations
 
+import asyncio
+import logging
 import time
 from typing import Any
 
 import httpx
 import psycopg
-from psycopg_pool import AsyncConnectionPool
 import redis.asyncio as aioredis
+from psycopg_pool import AsyncConnectionPool
 
 from app.core.config import Settings
+
+logger = logging.getLogger(__name__)
 
 
 class InfraManager:
@@ -20,17 +24,19 @@ class InfraManager:
         self.redis: aioredis.Redis | None = None
 
     async def startup(self) -> None:
-        """Initialize connection pools lazily without crashing app boot if containers are down."""
+        """Initialize connection pools lazily without blocking boot when containers are down."""
         try:
             self.pg_pool = AsyncConnectionPool(
                 conninfo=self.settings.libpq_dsn,
-                min_size=1,
+                min_size=0,
                 max_size=10,
                 open=False,
-                kwargs={"autocommit": True, "prepare_threshold": 0},
+                reconnect_timeout=5.0,
+                kwargs={"autocommit": True, "prepare_threshold": 0, "connect_timeout": 2},
             )
-            await self.pg_pool.open(wait=False)
-        except Exception:
+            await asyncio.wait_for(self.pg_pool.open(wait=False), timeout=2.0)
+        except (psycopg.Error, OSError, asyncio.TimeoutError, RuntimeError) as exc:
+            logger.warning("PostgreSQL pool deferred on startup: %s", exc)
             self.pg_pool = None
 
         try:
@@ -40,16 +46,25 @@ class InfraManager:
                 socket_connect_timeout=2.0,
                 socket_timeout=2.0,
             )
-        except Exception:
+        except (aioredis.RedisError, OSError, ValueError) as exc:
+            logger.warning("Redis client initialization deferred on startup: %s", exc)
             self.redis = None
 
     async def shutdown(self) -> None:
         if self.pg_pool is not None:
-            await self.pg_pool.close()
-            self.pg_pool = None
+            try:
+                await asyncio.wait_for(self.pg_pool.close(), timeout=2.0)
+            except (psycopg.Error, OSError, asyncio.TimeoutError, RuntimeError) as exc:
+                logger.warning("PostgreSQL pool close warning: %s", exc)
+            finally:
+                self.pg_pool = None
         if self.redis is not None:
-            await self.redis.aclose()
-            self.redis = None
+            try:
+                await asyncio.wait_for(self.redis.aclose(), timeout=2.0)
+            except (aioredis.RedisError, OSError, asyncio.TimeoutError) as exc:
+                logger.warning("Redis client close warning: %s", exc)
+            finally:
+                self.redis = None
 
     async def probe_postgres(self) -> dict[str, Any]:
         started = time.perf_counter()
@@ -63,7 +78,7 @@ class InfraManager:
 
             async with self.pg_pool.connection(timeout=2.0) as conn:
                 return await self._inspect_pg_connection(conn, started)
-        except Exception as exc:
+        except (psycopg.Error, OSError, asyncio.TimeoutError, RuntimeError) as exc:
             return {
                 "status": "down",
                 "latency_ms": round((time.perf_counter() - started) * 1000, 2),
@@ -104,7 +119,7 @@ class InfraManager:
                 "latency_ms": round((time.perf_counter() - started) * 1000, 2),
                 "detail": "Redis PONG received" if pong else "Unexpected PING response",
             }
-        except Exception as exc:
+        except (aioredis.RedisError, OSError, asyncio.TimeoutError) as exc:
             return {
                 "status": "down",
                 "latency_ms": round((time.perf_counter() - started) * 1000, 2),
@@ -133,7 +148,7 @@ class InfraManager:
                 "ui_url": self.settings.phoenix_ui_url,
                 "detail": f"HTTP {resp.status_code}",
             }
-        except Exception as exc:
+        except (httpx.HTTPError, OSError) as exc:
             return {
                 "status": "down",
                 "latency_ms": round((time.perf_counter() - started) * 1000, 2),
