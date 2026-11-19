@@ -1,6 +1,8 @@
 services:
   postgres:
-    image: pgvector/pgvector:pg16
+    build:
+      context: ./infra/postgres
+    image: marketelite-pgvector:pg16
     container_name: marketelite-postgres
     restart: unless-stopped
     environment:
@@ -19,7 +21,7 @@ services:
       retries: 10
 
   redis:
-    image: redis:7-alpine
+    image: public.ecr.aws/docker/library/redis:7-alpine
     container_name: marketelite-redis
     restart: unless-stopped
     command: redis-server --appendonly yes
@@ -34,7 +36,9 @@ services:
       retries: 10
 
   phoenix:
-    image: arizephoenix/phoenix:latest
+    build:
+      context: ./infra/phoenix
+    image: marketelite-phoenix:latest
     container_name: marketelite-phoenix
     restart: unless-stopped
     ports:
@@ -44,6 +48,7 @@ services:
       - phoenix_data:/mnt/data
     environment:
       PHOENIX_WORKING_DIR: /mnt/data
+      PHOENIX_ENABLE_AUTH: "false"
 
   frontend:
     profiles: ["web"]
