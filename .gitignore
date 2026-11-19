@@ -1,0 +1,50 @@
+# Environment & Secrets (NEVER commit real keys)
+.env
+.env.local
+.env.*.local
+!.env.example
+*.pem
+*.key
+
+# Python
+.venv/
+venv/
+env/
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Node.js / Next.js
+node_modules/
+.next/
+out/
+build/
+dist/
+.turbo/
+*.tsbuildinfo
+npm-debug.log*
+pnpm-debug.log*
+
+# Local Data & Telemetry Volumes
+data/
+postgres_data/
+redis_data/
+phoenix_data/
+*.db
+*.sqlite3
+
+# Logs & OS & IDE
+logs/
+*.log
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
