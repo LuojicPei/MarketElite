@@ -56,9 +56,45 @@ function deltaTone(val: number | null | undefined, dark = false): string {
   return dark ? "text-zinc-300" : "text-zinc-600";
 }
 
+const REGIME_BI: Record<string, string> = {
+  HIGH_VOL_TRANSITION: "高波切换 · HIGH VOL TRANSITION",
+  RISK_ON_EXPANSION: "风险扩张 · RISK ON EXPANSION",
+  RISK_OFF_STRESS: "避险承压 · RISK OFF STRESS",
+  LIQUIDITY_TIGHTENING: "流动性收紧 · LIQUIDITY TIGHTENING",
+  NEUTRAL_ROTATION: "中性轮动 · NEUTRAL ROTATION",
+};
+
+const SENTIMENT_BI: Record<string, string> = {
+  "Extreme Fear": "极度恐慌 Extreme Fear",
+  Fear: "恐慌 Fear",
+  Neutral: "中性 Neutral",
+  Greed: "贪婪 Greed",
+  "Extreme Greed": "极度贪婪 Extreme Greed",
+};
+
+const PILLAR_BI: Record<string, string> = {
+  momentum: "动量 Mom",
+  breadth: "广度 Brd",
+  volatility: "波动 Vol",
+  credit: "信用 Crd",
+  risk_appetite: "风险 Beta",
+};
+
+const VIX_STATE_BI: Record<string, string> = {
+  "Contango (Calm)": "正向升水 Contango",
+  "Flat (Transition)": "期限走平 Flat",
+  "Backwardation (Stress)": "倒挂贴水 Backwardation",
+};
+
+const BUCKET_BI: Record<string, string> = {
+  Offensive: "进攻 Offensive",
+  Cyclical: "周期 Cyclical",
+  Defensive: "防御 Defensive",
+};
+
 function formatRegimeLabel(label: string | undefined): string {
-  if (!label) return "INITIALIZING";
-  return label.replaceAll("_", " ");
+  if (!label) return "初始化中 · INITIALIZING";
+  return REGIME_BI[label] ?? label.replaceAll("_", " ");
 }
 
 export default function MarketCockpit() {
@@ -152,7 +188,7 @@ export default function MarketCockpit() {
                 MarketElite
               </span>
               <span className="rounded-md border border-zinc-200 bg-zinc-50 px-2 py-0.5 font-mono text-[10px] uppercase tracking-widest text-zinc-500">
-                Infrastructure Console
+                Infrastructure Console · 基础设施
               </span>
             </div>
             <div className="flex items-center gap-1 rounded-full border border-zinc-200 bg-zinc-100 p-0.5 font-mono text-[11px]">
@@ -161,14 +197,14 @@ export default function MarketCockpit() {
                 onClick={() => setViewMode("cockpit")}
                 className="rounded-full px-3 py-1 text-zinc-600 transition hover:text-zinc-950"
               >
-                5-Layer Cockpit
+                5-Layer Cockpit 驾驶舱
               </button>
               <button
                 type="button"
                 onClick={() => setViewMode("infra")}
                 className="rounded-full bg-zinc-950 px-3 py-1 text-white"
               >
-                Infra & Topology
+                Infra 拓扑
               </button>
             </div>
           </div>
@@ -193,8 +229,8 @@ export default function MarketCockpit() {
                 MarketElite
               </span>
             </div>
-            <span className="hidden rounded-md border border-zinc-200 bg-zinc-50 px-2 py-0.5 font-mono text-[10px] uppercase tracking-widest text-zinc-500 md:inline-block">
-              US Equity Structure Workstation
+            <span className="hidden rounded-md border border-zinc-200 bg-zinc-50 px-2 py-0.5 font-mono text-[10px] tracking-wider text-zinc-500 md:inline-block">
+              美股结构与风险终端 · US Equity Terminal
             </span>
           </div>
 
@@ -249,7 +285,7 @@ export default function MarketCockpit() {
               className="inline-flex items-center gap-1.5 rounded-full border border-zinc-200 bg-white px-3 py-1 font-mono text-[11px] text-zinc-800 transition hover:border-zinc-950 disabled:opacity-50"
             >
               <RefreshCw className={`h-3 w-3 ${syncing ? "animate-spin" : ""}`} />
-              {syncing ? "Syncing..." : "Sync"}
+              {syncing ? "同步中 Syncing..." : "同步 Sync"}
             </button>
 
             <div className="flex items-center gap-1 rounded-full border border-zinc-200 bg-zinc-100 p-0.5 font-mono text-[11px]">
@@ -258,7 +294,7 @@ export default function MarketCockpit() {
                 onClick={() => setViewMode("cockpit")}
                 className="rounded-full bg-zinc-950 px-3 py-1 text-white"
               >
-                Cockpit
+                驾驶舱 Cockpit
               </button>
               <button
                 type="button"
@@ -326,21 +362,21 @@ export default function MarketCockpit() {
                 <div className="space-y-4">
                   <div className="flex flex-wrap items-start justify-between gap-3">
                     <div>
-                      <div className="flex items-center gap-2 font-mono text-[10px] uppercase tracking-[0.2em] text-zinc-400">
+                      <div className="flex items-center gap-2 font-mono text-[10px] tracking-[0.16em] text-zinc-400">
                         <Layers className="h-3.5 w-3.5" />
-                        Layer 01 · Macro Liquidity & Regime Anchor
+                        LAYER 01 · 宏观流动性与体制锚 (Macro Regime Anchor)
                       </div>
-                      <h1 className="mt-2 font-serif text-3xl tracking-tight text-white sm:text-4xl">
+                      <h1 className="mt-2 font-serif text-2xl tracking-tight text-white sm:text-3xl">
                         {formatRegimeLabel(overview?.regime?.regime_label)}
                       </h1>
                     </div>
                     <div className="flex flex-col items-end gap-1 font-mono text-[11px]">
                       <span className="rounded-full border border-zinc-700 bg-zinc-900 px-3 py-1 text-zinc-200">
-                        Stress {overview?.regime?.stress_score ?? 0} · Support{" "}
+                        压力 Stress {overview?.regime?.stress_score ?? 0} · 支撑 Support{" "}
                         {overview?.regime?.support_score ?? 0}
                       </span>
                       <span className="text-[10px] text-zinc-500">
-                        Regime Date {overview?.regime_date ?? "—"} · Deterministic 0-Token
+                        基准日 {overview?.regime_date ?? "—"} · 0-Token 规则计算
                       </span>
                     </div>
                   </div>
@@ -348,8 +384,8 @@ export default function MarketCockpit() {
                   {/* Headline Metrics Strip */}
                   <div className="grid grid-cols-2 gap-3 border-y border-zinc-800/90 py-3.5 sm:grid-cols-4">
                     <div>
-                      <div className="font-mono text-[10px] uppercase tracking-wider text-zinc-500">
-                        US Net Liquidity
+                      <div className="font-mono text-[10px] tracking-wider text-zinc-500">
+                        美联储净流动性 Net Liq
                       </div>
                       <div className="mt-1 font-mono text-lg font-semibold tabular-nums text-white">
                         {overview?.macro?.net_liquidity.latest_billions != null
@@ -367,21 +403,21 @@ export default function MarketCockpit() {
                     </div>
 
                     <div>
-                      <div className="font-mono text-[10px] uppercase tracking-wider text-zinc-500">
-                        10Y – 2Y Curve
+                      <div className="font-mono text-[10px] tracking-wider text-zinc-500">
+                        美债利差 10Y–2Y Curve
                       </div>
                       <div className="mt-1 font-mono text-lg font-semibold tabular-nums text-white">
                         {fmtSigned(overview?.macro?.yield_credit.yield_spread_10y2y, 2, "%")}
                       </div>
                       <div className="font-mono text-[11px] tabular-nums text-zinc-400">
-                        10Y {fmtNum(overview?.macro?.yield_credit.dgs10, 2, "%")} · Real{" "}
+                        10Y {fmtNum(overview?.macro?.yield_credit.dgs10, 2, "%")} · 实际 Real{" "}
                         {fmtNum(overview?.macro?.yield_credit.dfii10, 2, "%")}
                       </div>
                     </div>
 
                     <div>
-                      <div className="font-mono text-[10px] uppercase tracking-wider text-zinc-500">
-                        HY Credit OAS
+                      <div className="font-mono text-[10px] tracking-wider text-zinc-500">
+                        高收益利差 HY OAS
                       </div>
                       <div className="mt-1 font-mono text-lg font-semibold tabular-nums text-white">
                         {fmtNum(overview?.macro?.yield_credit.hy_oas, 2, "%")}
@@ -392,14 +428,16 @@ export default function MarketCockpit() {
                     </div>
 
                     <div>
-                      <div className="font-mono text-[10px] uppercase tracking-wider text-zinc-500">
-                        VIX / VIX3M
+                      <div className="font-mono text-[10px] tracking-wider text-zinc-500">
+                        波动期限比 VIX/VIX3M
                       </div>
                       <div className="mt-1 font-mono text-lg font-semibold tabular-nums text-white">
                         {fmtNum(overview?.macro?.vix_structure.vix_vix3m_ratio, 3)}
                       </div>
                       <div className="font-mono text-[11px] text-zinc-400">
-                        {overview?.macro?.vix_structure.structure_state ?? "—"}
+                        {VIX_STATE_BI[overview?.macro?.vix_structure.structure_state ?? ""] ??
+                          overview?.macro?.vix_structure.structure_state ??
+                          "—"}
                       </div>
                     </div>
                   </div>
@@ -434,11 +472,11 @@ export default function MarketCockpit() {
               <SpotlightBlock tone="gallery" className="flex flex-col justify-between p-6 lg:col-span-5">
                 <div className="space-y-4">
                   <div className="flex flex-wrap items-center justify-between gap-2">
-                    <div className="font-mono text-[10px] uppercase tracking-[0.2em] text-zinc-500">
-                      Layer 02 & 05 · Vol Structure & Sentiment
+                    <div className="font-mono text-[10px] tracking-[0.16em] text-zinc-500">
+                      LAYER 02 &amp; 05 · 波动率期限与市场情绪 (Vol &amp; Sentiment)
                     </div>
                     <span className="shrink-0 whitespace-nowrap rounded-full border border-zinc-200 bg-zinc-50 px-2.5 py-0.5 font-mono text-[10px] text-zinc-600">
-                      Custom 5-Pillar Model
+                      5 维合成模型 · 5-Pillar
                     </span>
                   </div>
 
@@ -446,19 +484,23 @@ export default function MarketCockpit() {
                   <div className="rounded-xl border border-zinc-200 bg-zinc-50/70 p-4">
                     <div className="flex items-baseline justify-between">
                       <div>
-                        <div className="font-mono text-[10px] uppercase tracking-wider text-zinc-500">
-                          Composite Sentiment Index
+                        <div className="font-mono text-[10px] tracking-wider text-zinc-500">
+                          自研恐慌贪婪指数 Fear &amp; Greed Index
                         </div>
                         <div className="mt-1 flex items-baseline gap-2.5">
                           <span className="font-mono text-3xl font-bold tabular-nums text-zinc-950">
                             {fmtNum(overview?.regime?.fear_greed.score, 1)}
                           </span>
-                          <span className="font-serif text-xl italic text-zinc-700">
-                            {overview?.regime?.fear_greed.label ?? "Unavailable"}
+                          <span className="font-serif text-lg italic text-zinc-700">
+                            {SENTIMENT_BI[overview?.regime?.fear_greed.label ?? ""] ??
+                              overview?.regime?.fear_greed.label ??
+                              "Unavailable"}
                           </span>
                         </div>
                       </div>
-                      <span className="font-mono text-[10px] text-zinc-400">0 Fear · 100 Greed</span>
+                      <span className="font-mono text-[10px] text-zinc-400">
+                        0 极恐 Fear · 100 极贪 Greed
+                      </span>
                     </div>
 
                     <div className="mt-3 h-2 w-full overflow-hidden rounded-full bg-zinc-200">
@@ -477,8 +519,8 @@ export default function MarketCockpit() {
                             <div className="font-mono text-[11px] font-semibold tabular-nums text-zinc-900">
                               {score !== null && score !== undefined ? score.toFixed(0) : "—"}
                             </div>
-                            <div className="truncate font-mono text-[9px] uppercase text-zinc-500">
-                              {pillar.replace("_", " ")}
+                            <div className="truncate font-mono text-[9px] text-zinc-500">
+                              {PILLAR_BI[pillar] ?? pillar.replace("_", " ")}
                             </div>
                           </div>
                         )
@@ -488,17 +530,19 @@ export default function MarketCockpit() {
 
                   {/* VIX Term Curve */}
                   <div>
-                    <div className="mb-2 flex items-center justify-between font-mono text-[10px] uppercase tracking-wider text-zinc-500">
-                      <span>CBOE Volatility Term Curve</span>
+                    <div className="mb-2 flex items-center justify-between font-mono text-[10px] tracking-wider text-zinc-500">
+                      <span>CBOE 波动率期限结构 (VIX Curve)</span>
                       <span className="text-zinc-800">
-                        {overview?.macro?.vix_structure.structure_state ?? "—"}
+                        {VIX_STATE_BI[overview?.macro?.vix_structure.structure_state ?? ""] ??
+                          overview?.macro?.vix_structure.structure_state ??
+                          "—"}
                       </span>
                     </div>
                     <div className="grid grid-cols-3 gap-2.5">
                       {[
-                        { label: "VIX9D (9-Day)", val: overview?.macro?.vix_structure.vix9d },
-                        { label: "VIX (30-Day)", val: overview?.macro?.vix_structure.vix },
-                        { label: "VIX3M (3-Mon)", val: overview?.macro?.vix_structure.vix3m },
+                        { label: "VIX9D (9日短端)", val: overview?.macro?.vix_structure.vix9d },
+                        { label: "VIX (30日基准)", val: overview?.macro?.vix_structure.vix },
+                        { label: "VIX3M (3月远端)", val: overview?.macro?.vix_structure.vix3m },
                       ].map((v) => (
                         <div
                           key={v.label}
@@ -516,13 +560,13 @@ export default function MarketCockpit() {
                   {/* Funding & Credit Plumbing Table */}
                   <div className="grid grid-cols-2 gap-x-4 gap-y-2 border-t border-zinc-200 pt-3 font-mono text-xs tabular-nums">
                     <div className="flex justify-between">
-                      <span className="text-zinc-500">SOFR Rate</span>
+                      <span className="text-zinc-500">SOFR 隔夜利率</span>
                       <span className="font-medium text-zinc-950">
                         {fmtNum(overview?.macro?.yield_credit.sofr, 2, "%")}
                       </span>
                     </div>
                     <div className="flex justify-between">
-                      <span className="text-zinc-500">Bank Reserves</span>
+                      <span className="text-zinc-500">银行准备金 Reserves</span>
                       <span className="font-medium text-zinc-950">
                         {overview?.macro?.yield_credit.wresbal_billions != null
                           ? `$${overview.macro.yield_credit.wresbal_billions.toLocaleString()}B`
@@ -530,7 +574,7 @@ export default function MarketCockpit() {
                       </span>
                     </div>
                     <div className="flex justify-between">
-                      <span className="text-zinc-500">IG Credit OAS</span>
+                      <span className="text-zinc-500">投资级利差 IG OAS</span>
                       <span className="font-medium text-zinc-950">
                         {fmtNum(overview?.macro?.yield_credit.ig_oas, 2, "%")}
                       </span>
@@ -565,30 +609,36 @@ export default function MarketCockpit() {
               <SpotlightBlock tone="gallery" className="flex flex-col justify-between p-6 lg:col-span-5">
                 <div className="space-y-4">
                   <div className="flex flex-wrap items-center justify-between gap-2">
-                    <div className="font-mono text-[10px] uppercase tracking-[0.2em] text-zinc-500">
-                      Layer 03 · Core Indices & Breadth
+                    <div className="font-mono text-[10px] tracking-[0.16em] text-zinc-500">
+                      LAYER 03 · 核心指数与市场广度 (Core &amp; Breadth)
                     </div>
                     <span className="shrink-0 font-mono text-[10px] text-zinc-400">
-                      Click row to inspect chart
+                      点击行切换 K 线 · Click row
                     </span>
                   </div>
 
                   {/* Breadth Summary Pills */}
                   <div className="grid grid-cols-3 gap-2">
                     <div className="rounded-xl border border-zinc-200 bg-zinc-50/80 p-2.5">
-                      <div className="font-mono text-[10px] text-zinc-500">% &gt; 50MA</div>
+                      <div className="font-mono text-[10px] text-zinc-500">
+                        站上 50日线 &gt;50MA
+                      </div>
                       <div className="mt-0.5 font-mono text-base font-semibold tabular-nums text-zinc-950">
                         {fmtNum(overview?.equities?.breadth.pct_above_50ma, 1, "%")}
                       </div>
                     </div>
                     <div className="rounded-xl border border-zinc-200 bg-zinc-50/80 p-2.5">
-                      <div className="font-mono text-[10px] text-zinc-500">% &gt; 200MA</div>
+                      <div className="font-mono text-[10px] text-zinc-500">
+                        站上 200日线 &gt;200MA
+                      </div>
                       <div className="mt-0.5 font-mono text-base font-semibold tabular-nums text-zinc-950">
                         {fmtNum(overview?.equities?.breadth.pct_above_200ma, 1, "%")}
                       </div>
                     </div>
                     <div className="rounded-xl border border-zinc-200 bg-zinc-50/80 p-2.5">
-                      <div className="font-mono text-[10px] text-zinc-500">RSP / SPY 20D</div>
+                      <div className="font-mono text-[10px] text-zinc-500">
+                        等权强弱 RSP/SPY
+                      </div>
                       <div
                         className={`mt-0.5 font-mono text-base font-semibold tabular-nums ${deltaTone(
                           overview?.equities?.breadth.rsp_spy_20d_delta_pct,
@@ -667,9 +717,9 @@ export default function MarketCockpit() {
                 {/* All Tracked Universe Quick Selector */}
                 <div className="mt-4 border-t border-zinc-200 pt-3">
                   <div className="mb-1.5 flex items-center justify-between font-mono text-[10px] text-zinc-500">
-                    <span>Persisted Watchlist ({trackedAssets.length} Assets)</span>
+                    <span>观测资产池 Watchlist ({trackedAssets.length})</span>
                     <span>
-                      Adv/Dec: {overview?.equities?.breadth.advances ?? 0}/
+                      涨跌家数 Adv/Dec: {overview?.equities?.breadth.advances ?? 0}/
                       {overview?.equities?.breadth.declines ?? 0}
                     </span>
                   </div>
@@ -697,9 +747,9 @@ export default function MarketCockpit() {
                 <div className="space-y-3">
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <div>
-                      <div className="flex items-center gap-2 font-mono text-[10px] uppercase tracking-[0.2em] text-zinc-400">
+                      <div className="flex items-center gap-2 font-mono text-[10px] tracking-[0.16em] text-zinc-400">
                         <Activity className="h-3.5 w-3.5" />
-                        Layer 04 · Consolidated Micro Structure & Moving Averages
+                        LAYER 04 · 个股微观量价与均线 (Micro Structure)
                       </div>
                       <div className="mt-1 flex flex-wrap items-baseline gap-3">
                         <h2 className="font-serif text-2xl text-white sm:text-3xl">
@@ -750,7 +800,7 @@ export default function MarketCockpit() {
                       </span>
                     </div>
                     <div>
-                      <span className="block text-[9px] uppercase text-zinc-500">Dist 50MA</span>
+                      <span className="block text-[9px] uppercase text-zinc-500">距50日线 Dist 50MA</span>
                       <span
                         className={deltaTone(assetDetail?.technicals.dist_50ma_pct, true)}
                       >
@@ -758,7 +808,7 @@ export default function MarketCockpit() {
                       </span>
                     </div>
                     <div>
-                      <span className="block text-[9px] uppercase text-zinc-500">Dist 200MA</span>
+                      <span className="block text-[9px] uppercase text-zinc-500">距200日线 Dist 200MA</span>
                       <span
                         className={deltaTone(assetDetail?.technicals.dist_200ma_pct, true)}
                       >
@@ -796,9 +846,9 @@ export default function MarketCockpit() {
                 {/* Compact News Strip (if available from Alpaca) */}
                 {assetDetail?.news && assetDetail.news.length > 0 && (
                   <div className="mt-3 border-t border-zinc-800 pt-3">
-                    <div className="mb-1.5 flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-wider text-zinc-500">
+                    <div className="mb-1.5 flex items-center gap-1.5 font-mono text-[10px] tracking-wider text-zinc-500">
                       <Newspaper className="h-3 w-3" />
-                      Latest Headlines ({selectedSymbol})
+                      最新财经快讯 Headlines ({selectedSymbol})
                     </div>
                     <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
                       {assetDetail.news.slice(0, 2).map((n) => (
@@ -832,12 +882,12 @@ export default function MarketCockpit() {
               <SpotlightBlock tone="gallery" className="p-6 lg:col-span-7">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>
-                    <div className="flex items-center gap-2 font-mono text-[10px] uppercase tracking-[0.2em] text-zinc-500">
+                    <div className="flex items-center gap-2 font-mono text-[10px] tracking-[0.16em] text-zinc-500">
                       <BarChart3 className="h-3.5 w-3.5" />
-                      Layer 02 · Dealer Positioning Wall Map
+                      LAYER 02 · 期权做市商墙体分布 (Dealer Positioning)
                     </div>
                     <h2 className="mt-1 font-serif text-2xl text-zinc-950">
-                      {gexSymbol} Estimated GEX Profile
+                      {gexSymbol} Estimated GEX 伽马敞口估算
                     </h2>
                   </div>
 
@@ -868,27 +918,27 @@ export default function MarketCockpit() {
                 <div className="my-4 grid grid-cols-2 gap-3 sm:grid-cols-5">
                   {[
                     {
-                      label: "Spot Ref",
+                      label: "现价 Spot Ref",
                       value: activeGex ? `$${activeGex.spot_price.toFixed(2)}` : "—",
                       cls: "text-zinc-950",
                     },
                     {
-                      label: "Net GEX",
+                      label: "净伽马 Net GEX",
                       value: activeGex ? fmtBillions(activeGex.net_gex) : "—",
                       cls: deltaTone(activeGex?.net_gex, false),
                     },
                     {
-                      label: "Call Wall",
+                      label: "看涨墙 Call Wall",
                       value: activeGex?.call_wall ? `$${activeGex.call_wall.toFixed(0)}` : "—",
                       cls: "text-emerald-600",
                     },
                     {
-                      label: "Put Wall",
+                      label: "看跌墙 Put Wall",
                       value: activeGex?.put_wall ? `$${activeGex.put_wall.toFixed(0)}` : "—",
                       cls: "text-rose-600",
                     },
                     {
-                      label: "Zero Gamma",
+                      label: "翻转位 Zero Gamma",
                       value: activeGex?.zero_gamma ? `$${activeGex.zero_gamma.toFixed(2)}` : "—",
                       cls: "text-amber-600",
                     },
@@ -930,16 +980,16 @@ export default function MarketCockpit() {
 
               {/* Layer 3 Right: Obsidian 11-Sector Rotation Matrix */}
               <SpotlightBlock tone="obsidian" className="p-6 lg:col-span-5">
-                <div className="flex items-center justify-between">
+                <div className="flex items-start justify-between gap-3">
                   <div>
-                    <div className="font-mono text-[10px] uppercase tracking-[0.2em] text-zinc-400">
-                      Layer 03 · 11 SPDR Sector Rotation
+                    <div className="font-mono text-[10px] tracking-[0.16em] text-zinc-400">
+                      LAYER 03 · 11 大板块轮动热力 (SPDR Sector Rotation)
                     </div>
-                    <h2 className="mt-1 font-serif text-2xl text-white">
-                      Offensive / Cyclical / Defensive
+                    <h2 className="mt-1 font-serif text-xl text-white sm:text-2xl">
+                      进攻 Offensive / 周期 Cyclical / 防御 Defensive
                     </h2>
                   </div>
-                  <span className="font-mono text-[10px] text-zinc-500">Sorted 20D</span>
+                  <span className="shrink-0 whitespace-nowrap font-mono text-[10px] text-zinc-500">按20日排序</span>
                 </div>
 
                 <div className="mt-4 overflow-x-auto">
@@ -947,7 +997,7 @@ export default function MarketCockpit() {
                     <thead>
                       <tr className="border-b border-zinc-800 text-[10px] uppercase text-zinc-500">
                         <th className="py-2 font-medium">ETF</th>
-                        <th className="py-2 font-medium">Bucket</th>
+                        <th className="py-2 font-medium">风格 Bucket</th>
                         <th className="py-2 text-right font-medium">1D</th>
                         <th className="py-2 text-right font-medium">20D</th>
                         <th className="py-2 text-right font-medium">vs SPY</th>
@@ -966,8 +1016,8 @@ export default function MarketCockpit() {
                           }`}
                         >
                           <td className="py-2 pl-2 font-semibold">{sec.symbol}</td>
-                          <td className="py-2 text-[10px] uppercase opacity-75">
-                            {sec.bucket}
+                          <td className="py-2 text-[10px] opacity-80">
+                            {BUCKET_BI[sec.bucket] ?? sec.bucket}
                           </td>
                           <td
                             className={`py-2 text-right ${deltaTone(
@@ -1013,14 +1063,14 @@ export default function MarketCockpit() {
             >
               {/* Cross-Asset Rolling Correlations */}
               <SpotlightBlock tone="obsidian" className="p-6 lg:col-span-4">
-                <div className="font-mono text-[10px] uppercase tracking-[0.2em] text-zinc-400">
-                  Layer 03 · Cross-Asset Regime Fit
+                <div className="font-mono text-[10px] tracking-[0.16em] text-zinc-400">
+                  LAYER 03 · 跨资产协同关系 (Cross-Asset Fit)
                 </div>
                 <h3 className="mt-1 font-serif text-xl text-white">
-                  Rolling Correlation vs SPY
+                  跨资产滚动相关性 (vs SPY)
                 </h3>
                 <p className="mt-0.5 font-mono text-[10px] text-zinc-500">
-                  USD (UUP), Gold (GLD), Copper (CPER), 20Y Bonds (TLT), BTC
+                  美元 USD (UUP), 黄金 Gold (GLD), 铜 Copper (CPER), 美债 Bonds (TLT), BTC
                 </p>
                 <div className="mt-3">
                   <CorrelationHeatmapChart
@@ -1032,17 +1082,17 @@ export default function MarketCockpit() {
 
               {/* Institutional CFTC COT Futures Positioning */}
               <SpotlightBlock tone="gallery" className="p-6 lg:col-span-4">
-                <div className="flex items-center justify-between">
+                <div className="flex items-start justify-between gap-2">
                   <div>
-                    <div className="font-mono text-[10px] uppercase tracking-[0.2em] text-zinc-500">
-                      Layer 05 · Institutional Futures
+                    <div className="font-mono text-[10px] tracking-[0.16em] text-zinc-500">
+                      LAYER 05 · CFTC 机构期货净持仓 (COT)
                     </div>
                     <h3 className="mt-1 font-serif text-xl text-zinc-950">
-                      CFTC COT Non-Commercial Net
+                      非商业投机净头寸 Net Positioning
                     </h3>
                   </div>
-                  <span className="rounded border border-zinc-200 px-2 py-0.5 font-mono text-[10px] text-zinc-500">
-                    Weekly
+                  <span className="shrink-0 whitespace-nowrap rounded border border-zinc-200 px-2 py-0.5 font-mono text-[10px] text-zinc-500">
+                    周更 Weekly
                   </span>
                 </div>
 
@@ -1099,30 +1149,36 @@ export default function MarketCockpit() {
 
               {/* Catalyst Calendar: FRED Macro + Finnhub Earnings */}
               <SpotlightBlock tone="obsidian" className="p-6 lg:col-span-4">
-                <div className="flex items-center justify-between">
+                <div className="flex flex-wrap items-start justify-between gap-2.5">
                   <div>
-                    <div className="flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-[0.2em] text-zinc-400">
-                      <Calendar className="h-3 w-3" />
-                      Layer 05 · Catalyst Ledger
+                    <div className="flex items-center gap-1.5 font-mono text-[10px] tracking-[0.16em] text-zinc-400">
+                      <Calendar className="h-3 w-3 shrink-0" />
+                      LAYER 05 · 事件催化剂日历 (Catalysts)
                     </div>
                     <h3 className="mt-1 font-serif text-xl text-white">
-                      Macro Releases & Earnings
+                      宏观发布与重点财报 Macro &amp; Earnings
                     </h3>
                   </div>
 
-                  <div className="flex items-center gap-1 rounded-full border border-zinc-800 bg-zinc-900 p-0.5 font-mono text-[10px]">
-                    {(["all", "macro", "earnings"] as const).map((tab) => (
+                  <div className="flex shrink-0 items-center gap-1 rounded-full border border-zinc-800 bg-zinc-900 p-0.5 font-mono text-[10px]">
+                    {(
+                      [
+                        { id: "all", label: "全部 All" },
+                        { id: "macro", label: "宏观 Macro" },
+                        { id: "earnings", label: "财报 Earn" },
+                      ] as const
+                    ).map((tab) => (
                       <button
-                        key={tab}
+                        key={tab.id}
                         type="button"
-                        onClick={() => setCalendarFilter(tab)}
-                        className={`rounded-full px-2 py-0.5 capitalize transition ${
-                          calendarFilter === tab
+                        onClick={() => setCalendarFilter(tab.id)}
+                        className={`whitespace-nowrap rounded-full px-2 py-0.5 transition ${
+                          calendarFilter === tab.id
                             ? "bg-white text-zinc-950"
                             : "text-zinc-400 hover:text-white"
                         }`}
                       >
-                        {tab}
+                        {tab.label}
                       </button>
                     ))}
                   </div>
@@ -1185,11 +1241,11 @@ export default function MarketCockpit() {
           <div className="pointer-events-auto flex flex-wrap items-center gap-3 rounded-full border border-zinc-800 bg-[#0B0B0D]/95 px-4 py-2 text-white shadow-[0_20px_50px_-12px_rgba(0,0,0,0.65)] backdrop-blur-md">
             <span className="flex items-center gap-1.5 font-mono text-[11px] text-zinc-300">
               <Cpu className="h-3.5 w-3.5 text-emerald-400" />
-              Focus: <strong className="text-white">{selectedSymbol}</strong>
+              焦点 Focus: <strong className="text-white">{selectedSymbol}</strong>
             </span>
             <span className="hidden h-3 w-px bg-zinc-700 sm:inline-block" />
             <span className="hidden font-mono text-[11px] text-zinc-400 sm:inline">
-              Regime:{" "}
+              体制 Regime:{" "}
               <span className="text-zinc-200">
                 {formatRegimeLabel(overview?.regime?.regime_label)}
               </span>
@@ -1201,7 +1257,7 @@ export default function MarketCockpit() {
               className="inline-flex items-center gap-1.5 rounded-full bg-white px-3.5 py-1 font-mono text-[10px] font-semibold text-zinc-950 transition hover:bg-zinc-200"
             >
               <Sparkles className="h-3 w-3" />
-              Investigator + SEC RAG · Live
+              Investigator 投研主脑 · SEC 财报检索
             </button>
           </div>
         </motion.div>

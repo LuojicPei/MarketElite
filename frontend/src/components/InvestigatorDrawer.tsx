@@ -172,11 +172,11 @@ export default function InvestigatorDrawer({
                 </span>
                 <div>
                   <h2 className="font-serif text-xl tracking-tight text-white">
-                    Investigator &amp; SEC Hybrid RAG
+                    Investigator 投研主脑 &amp; SEC 财报混合检索
                   </h2>
                   <p className="font-mono text-[10px] text-zinc-400">
-                    FastMCP Read-Only ({agentStatus?.mcp_tools.length ?? 4} tools) · pgvector +
-                    tsvector RRF · Guarded Anti-Loop
+                    FastMCP 只读工具 ({agentStatus?.mcp_tools.length ?? 4} tools) · pgvector +
+                    tsvector RRF 混合检索 · 防死循环保护
                   </p>
                 </div>
               </div>
@@ -189,7 +189,7 @@ export default function InvestigatorDrawer({
                     rel="noreferrer"
                     className="hidden items-center gap-1 rounded-full border border-zinc-700 bg-zinc-900 px-2.5 py-1 font-mono text-[10px] text-zinc-300 transition hover:border-zinc-500 hover:text-white sm:inline-flex"
                   >
-                    Phoenix Trace
+                    Phoenix 链路
                     <ArrowUpRight className="h-3 w-3" />
                   </a>
                 )}
@@ -202,7 +202,7 @@ export default function InvestigatorDrawer({
                       tab === "agent" ? "bg-white text-zinc-950" : "text-zinc-400 hover:text-white"
                     }`}
                   >
-                    Investigator (SSE)
+                    Investigator 对话 (SSE)
                   </button>
                   <button
                     type="button"
@@ -211,7 +211,7 @@ export default function InvestigatorDrawer({
                       tab === "sec" ? "bg-white text-zinc-950" : "text-zinc-400 hover:text-white"
                     }`}
                   >
-                    SEC RAG (0-Token)
+                    SEC 财报直查 (0-Token)
                   </button>
                 </div>
 
@@ -231,12 +231,13 @@ export default function InvestigatorDrawer({
                 <>
                   {agentStatus && !agentStatus.llm_pro_ready && (
                     <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3.5 font-mono text-xs text-amber-200">
-                      <div className="font-semibold">LLM Key Required for Autonomous ReAct</div>
+                      <div className="font-semibold">
+                        开启多步智能体须知 · LLM API Key Required
+                      </div>
                       <p className="mt-1 text-[11px] text-amber-300/80">
-                        Set <code>LLM_PRO_API_KEY</code> and <code>LLM_FAST_API_KEY</code> in{" "}
-                        <code>.env</code> to activate Investigator SSE streaming. Meanwhile, switch
-                        to <strong>SEC RAG (0-Token)</strong> above to lazy-load live SEC 10-K/10-Q
-                        filings immediately.
+                        在 <code>.env</code> 填入 <code>LLM_PRO_API_KEY</code> 与{" "}
+                        <code>LLM_FAST_API_KEY</code> 即可唤醒完整 SSE 多步规划。当前可直接切换至
+                        <strong> SEC 财报直查 (0-Token)</strong> 实时拉取并检索 10-K/10-Q 原文。
                       </p>
                     </div>
                   )}
