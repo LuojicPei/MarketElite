@@ -3,6 +3,8 @@ from __future__ import annotations
 import itertools
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 
 import numpy as np
 
@@ -146,6 +148,27 @@ def compute_rvol(volumes: Sequence[float], window: int = 20) -> float | None:
     return round(float(volumes[-1]) / avg_vol, 3)
 
 
+def _session_rvol(bars: Sequence[DailyBarInput], window: int = 20) -> tuple[float | None, str]:
+    """Use last completed full session for RVOL when today's bar is still in-progress."""
+    volumes = [b.volume for b in bars]
+    if len(bars) < window + 2:
+        return compute_rvol(volumes, window), "current_bar"
+
+    latest_date = bars[-1].trade_date
+    try:
+        ny_now = datetime.now(ZoneInfo("America/New_York"))
+    except KeyError:
+        ny_now = datetime.now(timezone.utc)
+
+    is_partial_ny_session = (
+        latest_date == ny_now.date().isoformat()
+        and (ny_now.hour < 16 or (ny_now.hour == 16 and ny_now.minute < 15))
+    )
+    if is_partial_ny_session:
+        return compute_rvol(volumes[:-1], window), "last_closed_session"
+    return compute_rvol(volumes, window), "current_bar"
+
+
 def classify_volume_price_quadrant(change_1d_pct: float, rvol_20: float | None) -> str:
     """Classify price change vs RVOL into 4 deterministic volume-price regimes."""
     if rvol_20 is None:
@@ -176,7 +199,6 @@ def analyze_asset_technicals(bars: Sequence[DailyBarInput]) -> dict[str, object]
     closes = [b.close for b in bars]
     highs = [b.high for b in bars]
     lows = [b.low for b in bars]
-    volumes = [b.volume for b in bars]
 
     last_close = float(closes[-1])
     change_1d = _pct_change(closes, 1)
@@ -191,7 +213,7 @@ def analyze_asset_technicals(bars: Sequence[DailyBarInput]) -> dict[str, object]
     rsi_14 = compute_rsi(closes, 14)
     macd_val = compute_macd(closes)
     atr_14 = compute_atr(highs, lows, closes, 14)
-    rvol_20 = compute_rvol(volumes, 20)
+    rvol_20, rvol_basis = _session_rvol(bars, 20)
 
     dist_50 = round(((last_close / sma_50) - 1.0) * 100.0, 2) if sma_50 else None
     dist_200 = round(((last_close / sma_200) - 1.0) * 100.0, 2) if sma_200 else None
@@ -216,6 +238,7 @@ def analyze_asset_technicals(bars: Sequence[DailyBarInput]) -> dict[str, object]
         "atr_14": atr_14,
         "atr_pct": atr_pct,
         "rvol_20": rvol_20,
+        "rvol_basis": rvol_basis,
         "volume_price_tag": classify_volume_price_quadrant(change_1d or 0.0, rvol_20),
     }
 
@@ -290,11 +313,11 @@ def compute_sector_rotation(
     for ticker, (name, bucket) in SECTOR_BUCKETS.items():
         bars = sector_bars.get(ticker, ())
         closes = [b.close for b in bars]
-        volumes = [b.volume for b in bars]
         r1 = _pct_change(closes, 1)
         r5 = _pct_change(closes, 5)
         r20 = _pct_change(closes, 20)
         rel_20 = round(r20 - spy_20d, 2) if (r20 is not None and spy_20d is not None) else None
+        rvol_val, _ = _session_rvol(bars, 20)
         rows.append(
             {
                 "symbol": ticker,
@@ -305,7 +328,7 @@ def compute_sector_rotation(
                 "return_5d_pct": r5,
                 "return_20d_pct": r20,
                 "rel_spy_20d_pct": rel_20,
-                "rvol_20": compute_rvol(volumes, 20),
+                "rvol_20": rvol_val,
             }
         )
     rows.sort(key=lambda r: float(r["return_20d_pct"] or -999.0), reverse=True)

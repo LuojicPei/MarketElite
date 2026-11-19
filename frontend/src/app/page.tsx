@@ -1,5 +1,5 @@
-import StatusConsole from "@/components/StatusConsole";
+import MarketCockpit from "@/components/MarketCockpit";
 
 export default function HomePage() {
-  return <StatusConsole />;
+  return <MarketCockpit />;
 }

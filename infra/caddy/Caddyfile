@@ -1,0 +1,32 @@
+{
+	email {$MARKETELITE_ACME_EMAIL:admin@example.com}
+}
+
+{$MARKETELITE_DOMAIN:localhost} {
+	encode gzip zstd
+
+	header {
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "SAMEORIGIN"
+		Referrer-Policy "strict-origin-when-cross-origin"
+	}
+
+	@backend_paths {
+		path /api/* /health /docs /openapi.json /redoc
+	}
+
+	handle @backend_paths {
+		reverse_proxy api:8100 {
+			# Disable response buffering for Phase 3 LangGraph SSE token streaming
+			flush_interval -1
+			transport http {
+				dial_timeout 10s
+				response_header_timeout 120s
+			}
+		}
+	}
+
+	handle {
+		reverse_proxy frontend:3000
+	}
+}

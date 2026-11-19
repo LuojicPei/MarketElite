@@ -2,14 +2,17 @@ from __future__ import annotations
 
 import json
 import time
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from types import SimpleNamespace
 
+import httpx
 from fastapi.testclient import TestClient
 from typing_extensions import Self
 
+from app.core.config import Settings
 from app.main import create_app
 from app.services.pipeline import OVERVIEW_CACHE_KEY
+from app.services.providers.macro_feeds import MacroFeedsClient
 from tests.test_resilience import InMemoryFakeRedis
 
 
@@ -120,3 +123,46 @@ def test_asset_detail_returns_bars_technicals_and_estimated_gex() -> None:
         app.state.session_factory = lambda: _FakeSession([[], []])
         resp_missing = client.get("/api/assets/UNKNOWN")
         assert resp_missing.status_code == 404
+
+
+def test_list_tracked_assets_returns_latest_prices() -> None:
+    app = create_app()
+    rows = [
+        SimpleNamespace(
+            symbol="SPY",
+            asset_class="etf",
+            trade_date=date(2026, 11, 19),
+            close=606.0,
+            volume=42_000_000.0,
+        ),
+        SimpleNamespace(
+            symbol="SPY",
+            asset_class="etf",
+            trade_date=date(2026, 11, 18),
+            close=600.0,
+            volume=39_000_000.0,
+        ),
+    ]
+    with TestClient(app) as client:
+        app.state.session_factory = lambda: _FakeSession([rows])
+        resp = client.get("/api/assets")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["count"] == 1
+        assert body["assets"][0]["symbol"] == "SPY"
+        assert body["assets"][0]["change_1d_pct"] == 1.0
+
+
+async def test_fred_macro_calendar_parses_releases() -> None:
+    upcoming = (date.today() + timedelta(days=5)).isoformat()
+    payload = {"release_dates": [{"date": upcoming}, {"date": "2020-01-01"}]}
+    transport = httpx.MockTransport(lambda req: httpx.Response(200, json=payload))
+    async with httpx.AsyncClient(transport=transport) as client:
+        feeds = MacroFeedsClient(
+            Settings(_env_file=None, fred_api_key="test_key"),
+            http_client=client,
+        )
+        events = await feeds.get_fred_macro_calendar()
+        assert len(events) == 4
+        assert all(ev["event_type"] == "macro" for ev in events)
+        assert any("CPI" in ev["title"] for ev in events)

@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 T = TypeVar("T")
 
 TRANSIENT_HTTP_STATUSES = frozenset({429, 500, 502, 503, 504})
-PERMANENT_HTTP_STATUSES = frozenset({400, 401, 403, 404, 422})
+PERMANENT_HTTP_STATUSES = frozenset({400, 401, 402, 403, 404, 422})
 
 
 class ProviderError(Exception):

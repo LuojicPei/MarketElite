@@ -356,29 +356,42 @@ class AlpacaClient:
         }
 
     async def get_news(self, symbols: list[str], limit: int = 10) -> list[dict[str, Any]]:
-        """Fetch recent Alpaca news headlines for requested symbols."""
+        """Fetch recent Alpaca news headlines for requested US symbols."""
         headers = self._headers()
 
         async def _execute(client: httpx.AsyncClient) -> list[dict[str, Any]]:
             resp = await client.get(
                 f"{self.DATA_BASE}/v1beta1/news",
                 headers=headers,
-                params={"symbols": ",".join(s.upper() for s in symbols), "limit": limit},
+                params={
+                    "symbols": ",".join(s.upper() for s in symbols),
+                    "limit": min(50, limit * 3),
+                    "sort": "desc",
+                    "exclude_contentless": "true",
+                },
                 timeout=15.0,
             )
             raise_for_provider_response(resp, "alpaca_news")
             items = resp.json().get("news", [])
-            return [
-                {
-                    "id": str(item.get("id", "")),
-                    "headline": item.get("headline", ""),
-                    "source": item.get("source", ""),
-                    "url": item.get("url", ""),
-                    "symbols": item.get("symbols", []),
-                    "created_at": item.get("created_at", ""),
-                }
-                for item in items
-            ]
+            cleaned: list[dict[str, Any]] = []
+            noise_markers = ("CSE:", "(CSE:", "TSXV:", "(TSX-V:", "OTCPK:")
+            for item in items:
+                text_blob = f"{item.get('headline', '')} {item.get('summary', '')}"
+                if any(marker in text_blob for marker in noise_markers):
+                    continue
+                cleaned.append(
+                    {
+                        "id": str(item.get("id", "")),
+                        "headline": item.get("headline", ""),
+                        "source": item.get("source", ""),
+                        "url": item.get("url", ""),
+                        "symbols": item.get("symbols", []),
+                        "created_at": item.get("created_at", ""),
+                    }
+                )
+                if len(cleaned) >= limit:
+                    break
+            return cleaned
 
         if self._http_client is not None:
             return await _execute(self._http_client)

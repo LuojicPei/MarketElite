@@ -293,3 +293,79 @@ class MacroFeedsClient:
             hard_ttl_seconds=86400 * 3,
         )
         return list(res.data)
+
+    async def get_fred_macro_calendar(
+        self, *, days_ahead: int = 45, days_back: int = 3
+    ) -> list[dict[str, Any]]:
+        """Fetch official upcoming CPI/NFP/PCE/GDP release dates via free FRED release/dates."""
+        api_key = self._settings.fred_api_key.strip()
+        if not api_key:
+            raise ProviderUnconfiguredError("FRED_API_KEY is required for FRED release schedule")
+
+        releases: dict[int, tuple[str, str]] = {
+            10: ("US Consumer Price Index (CPI)", "High"),
+            50: ("US Employment Situation (NFP)", "High"),
+            54: ("US Personal Income & Outlays (PCE)", "High"),
+            53: ("US Gross Domestic Product (GDP)", "High"),
+        }
+        start_d = date.today() - timedelta(days=days_back)
+        end_d = date.today() + timedelta(days=days_ahead)
+
+        async def _fetch() -> list[dict[str, Any]]:
+            async def _exec(client: httpx.AsyncClient) -> list[dict[str, Any]]:
+                out: list[dict[str, Any]] = []
+                for rid, (title, impact) in releases.items():
+                    resp = await client.get(
+                        "https://api.stlouisfed.org/fred/release/dates",
+                        params={
+                            "release_id": rid,
+                            "api_key": api_key,
+                            "file_type": "json",
+                            "include_release_dates_with_no_data": "true",
+                            "sort_order": "desc",
+                            "limit": 12,
+                        },
+                        timeout=15.0,
+                    )
+                    raise_for_provider_response(resp, "fred")
+                    for row in resp.json().get("release_dates", []):
+                        dt_raw = str(row.get("date", ""))[:10]
+                        if not dt_raw:
+                            continue
+                        try:
+                            d = date.fromisoformat(dt_raw)
+                        except ValueError:
+                            continue
+                        if start_d <= d <= end_d:
+                            out.append(
+                                {
+                                    "event_key": f"fred:rel:{rid}:{dt_raw}",
+                                    "event_type": "macro",
+                                    "event_time": f"{dt_raw}T13:30:00+00:00",
+                                    "symbol": None,
+                                    "country": "US",
+                                    "title": title,
+                                    "impact": impact,
+                                    "actual": None,
+                                    "estimate": None,
+                                    "previous": None,
+                                    "source": "fred_releases",
+                                }
+                            )
+                return out
+
+            if self._http_client is not None:
+                return await _exec(self._http_client)
+            async with httpx.AsyncClient() as client:
+                return await _exec(client)
+
+        if self._cache is None:
+            return await _fetch()
+        res = await self._cache.get_or_fetch(
+            f"marketelite:fred:macro_cal:{start_d.isoformat()}:{end_d.isoformat()}",
+            provider="fred",
+            fetcher=_fetch,
+            soft_ttl_seconds=3600 * 12,
+            hard_ttl_seconds=86400 * 5,
+        )
+        return list(res.data)

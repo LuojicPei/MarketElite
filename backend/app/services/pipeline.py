@@ -355,6 +355,16 @@ async def sync_calendars(
     except (ProviderError, httpx.HTTPError) as exc:
         states["fmp"] = f"error: {exc}"
 
+    if states.get("fmp") != "ok":
+        try:
+            fred_events = await feeds.get_fred_macro_calendar()
+            events.extend(fred_events)
+            states["fred_calendar"] = f"ok ({len(fred_events)})"
+        except ProviderUnconfiguredError:
+            states["fred_calendar"] = "unconfigured"
+        except (ProviderError, httpx.HTTPError) as exc:
+            states["fred_calendar"] = f"error: {exc}"
+
     try:
         earn_events = await feeds.get_finnhub_earnings_calendar()
         events.extend(earn_events)
@@ -503,12 +513,28 @@ async def build_and_persist_overview(
                     "is_stale": snap.is_stale,
                 }
 
-        cal_stmt = (
+        macro_stmt = (
             select(EconomicCalendarEvent)
-            .where(EconomicCalendarEvent.event_time >= datetime.now(timezone.utc))
+            .where(
+                EconomicCalendarEvent.event_type == "macro",
+                EconomicCalendarEvent.event_time >= datetime.now(timezone.utc),
+            )
             .order_by(EconomicCalendarEvent.event_time)
-            .limit(15)
+            .limit(10)
         )
+        earn_stmt = (
+            select(EconomicCalendarEvent)
+            .where(
+                EconomicCalendarEvent.event_type == "earnings",
+                EconomicCalendarEvent.event_time >= datetime.now(timezone.utc),
+            )
+            .order_by(EconomicCalendarEvent.event_time)
+            .limit(12)
+        )
+        merged_cal = list((await session.execute(macro_stmt)).scalars().all()) + list(
+            (await session.execute(earn_stmt)).scalars().all()
+        )
+        merged_cal.sort(key=lambda ev: ev.event_time)
         upcoming = [
             {
                 "event_key": ev.event_key,
@@ -521,7 +547,7 @@ async def build_and_persist_overview(
                 "previous": ev.previous,
                 "eps_estimate": ev.eps_estimate,
             }
-            for ev in (await session.execute(cal_stmt)).scalars().all()
+            for ev in merged_cal
         ]
 
     def _latest_val(sid: str) -> float | None:

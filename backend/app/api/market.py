@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query, Request
-from sqlalchemy import desc, select
+from sqlalchemy import desc, func, select
 
 from app.core.config import get_settings
 from app.db.models import MarketDailyBar, MarketRegimeDaily, OptionsGexSnapshot
@@ -13,6 +13,56 @@ from app.services.providers.alpaca import AlpacaClient
 from app.services.resilience import DualTTLCache, ProviderError
 
 router = APIRouter(prefix="/api", tags=["market"])
+
+
+@router.get("/assets")
+async def list_tracked_assets(request: Request) -> dict[str, Any]:
+    """List persisted symbols with latest close and 1-day return for fast terminal switching."""
+    session_factory = request.app.state.session_factory
+    async with session_factory() as session:
+        ranked = (
+            select(
+                MarketDailyBar.symbol,
+                MarketDailyBar.asset_class,
+                MarketDailyBar.trade_date,
+                MarketDailyBar.close,
+                MarketDailyBar.volume,
+                func.row_number()
+                .over(
+                    partition_by=MarketDailyBar.symbol,
+                    order_by=desc(MarketDailyBar.trade_date),
+                )
+                .label("rn"),
+            )
+            .subquery()
+        )
+        stmt = select(ranked).where(ranked.c.rn <= 2).order_by(ranked.c.symbol, ranked.c.rn)
+        rows = (await session.execute(stmt)).all()
+
+    grouped: dict[str, list[Any]] = {}
+    for row in rows:
+        grouped.setdefault(str(row.symbol), []).append(row)
+
+    assets: list[dict[str, Any]] = []
+    for sym, items in sorted(grouped.items()):
+        latest = items[0]
+        prev = items[1] if len(items) > 1 else None
+        change_pct = (
+            round(((float(latest.close) / float(prev.close)) - 1.0) * 100.0, 2)
+            if prev is not None and float(prev.close) > 0
+            else None
+        )
+        assets.append(
+            {
+                "symbol": sym,
+                "asset_class": latest.asset_class,
+                "trade_date": latest.trade_date.isoformat(),
+                "close": round(float(latest.close), 4),
+                "change_1d_pct": change_pct,
+                "volume": float(latest.volume),
+            }
+        )
+    return {"count": len(assets), "assets": assets}
 
 
 @router.get("/dashboard/overview")

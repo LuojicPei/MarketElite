@@ -1,0 +1,124 @@
+services:
+  postgres:
+    build:
+      context: ./infra/postgres
+    container_name: marketelite-prod-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-marketelite}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-marketelite_change_me}
+      POSTGRES_DB: ${POSTGRES_DB:-marketelite}
+    volumes:
+      - marketelite_prod_pg:/var/lib/postgresql/data
+      - ./infra/postgres/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-marketelite} -d ${POSTGRES_DB:-marketelite}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: public.ecr.aws/docker/library/redis:7-alpine
+    container_name: marketelite-prod-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru"]
+    volumes:
+      - marketelite_prod_redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  phoenix:
+    build:
+      context: ./infra/phoenix
+    container_name: marketelite-prod-phoenix
+    restart: unless-stopped
+    environment:
+      PHOENIX_WORKING_DIR: /data
+    volumes:
+      - marketelite_prod_phoenix:/data
+    ports:
+      - "127.0.0.1:6007:6006"
+
+  api:
+    build:
+      context: ./backend
+    container_name: marketelite-prod-api
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      APP_ENV: production
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-marketelite}:${POSTGRES_PASSWORD:-marketelite_change_me}@postgres:5432/${POSTGRES_DB:-marketelite}
+      CHECKPOINT_DB_URI: postgresql://${POSTGRES_USER:-marketelite}:${POSTGRES_PASSWORD:-marketelite_change_me}@postgres:5432/${POSTGRES_DB:-marketelite}?sslmode=disable
+      REDIS_URL: redis://redis:6379/0
+      PHOENIX_COLLECTOR_ENDPOINT: http://phoenix:6006/v1/traces
+      CORS_ORIGINS: https://${MARKETELITE_DOMAIN:-localhost}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8100/health"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+
+  worker:
+    build:
+      context: ./backend
+    container_name: marketelite-prod-worker
+    restart: unless-stopped
+    command: ["arq", "app.workers.scheduler.WorkerSettings"]
+    env_file:
+      - .env
+    environment:
+      APP_ENV: production
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-marketelite}:${POSTGRES_PASSWORD:-marketelite_change_me}@postgres:5432/${POSTGRES_DB:-marketelite}
+      CHECKPOINT_DB_URI: postgresql://${POSTGRES_USER:-marketelite}:${POSTGRES_PASSWORD:-marketelite_change_me}@postgres:5432/${POSTGRES_DB:-marketelite}?sslmode=disable
+      REDIS_URL: redis://redis:6379/0
+      PHOENIX_COLLECTOR_ENDPOINT: http://phoenix:6006/v1/traces
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        # Empty base URL uses same-origin Caddy routing (`https://domain/api/...`)
+        NEXT_PUBLIC_API_BASE_URL: ""
+    container_name: marketelite-prod-frontend
+    restart: unless-stopped
+    depends_on:
+      - api
+
+  caddy:
+    image: caddy:2.8-alpine
+    container_name: marketelite-prod-caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      MARKETELITE_DOMAIN: ${MARKETELITE_DOMAIN:-localhost}
+      MARKETELITE_ACME_EMAIL: ${MARKETELITE_ACME_EMAIL:-admin@example.com}
+    volumes:
+      - ./infra/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - marketelite_caddy_data:/data
+      - marketelite_caddy_config:/config
+    depends_on:
+      - frontend
+      - api
+
+volumes:
+  marketelite_prod_pg:
+  marketelite_prod_redis:
+  marketelite_prod_phoenix:
+  marketelite_caddy_data:
+  marketelite_caddy_config:

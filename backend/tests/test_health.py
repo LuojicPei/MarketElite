@@ -11,9 +11,12 @@ from app.main import create_app
 def test_health_endpoint_masks_secrets_and_reports_components(monkeypatch) -> None:
     secret_value = "super_secret_alpaca_token_12345"
     test_settings = Settings(
+        _env_file=None,
         alpaca_api_key="PKTESTKEY123",
         alpaca_secret_key=secret_value,
         fred_api_key="fred_secret_999",
+        finnhub_api_key="",
+        fmp_api_key="",
     )
     monkeypatch.setattr("app.api.health.get_settings", lambda: test_settings)
 
