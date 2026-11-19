@@ -11,34 +11,47 @@ from fastapi.middleware.cors import CORSMiddleware
 if os.name == "nt":
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
+from app.api.agent import router as agent_router
 from app.api.health import router as health_router
 from app.api.market import router as market_router
 from app.core.clients import InfraManager
 from app.core.config import get_settings
+from app.core.telemetry import init_phoenix_telemetry
 from app.db.session import create_db_engine, create_session_factory
-
-
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    settings = get_settings()
-    infra = InfraManager(settings)
-    await infra.startup()
-    db_engine = create_db_engine(settings)
-    app.state.infra = infra
-    app.state.db_engine = db_engine
-    app.state.session_factory = create_session_factory(db_engine)
-    try:
-        yield
-    finally:
-        await db_engine.dispose()
-        await infra.shutdown()
+from app.mcp_servers.market_server import build_market_mcp_server, configure_mcp_dependencies
 
 
 def create_app() -> FastAPI:
     settings = get_settings()
+    app_mcp = build_market_mcp_server()
+    mcp_http_app = app_mcp.streamable_http_app()
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        init_phoenix_telemetry(settings)
+        infra = InfraManager(settings)
+        await infra.startup()
+        db_engine = create_db_engine(settings)
+        session_factory = create_session_factory(db_engine)
+        configure_mcp_dependencies(
+            settings=settings,
+            session_factory=session_factory,
+            redis_client=infra.redis,
+        )
+        app.state.infra = infra
+        app.state.db_engine = db_engine
+        app.state.session_factory = session_factory
+        app.state.mcp = app_mcp
+        async with app_mcp.session_manager.run():
+            try:
+                yield
+            finally:
+                await db_engine.dispose()
+                await infra.shutdown()
+
     app = FastAPI(
         title=f"{settings.app_name} API",
-        version="0.1.0",
+        version="0.3.0",
         description="Production-grade US Equity Market Structure & Multi-Agent Risk Workstation",
         lifespan=lifespan,
     )
@@ -53,6 +66,8 @@ def create_app() -> FastAPI:
 
     app.include_router(health_router)
     app.include_router(market_router)
+    app.include_router(agent_router)
+    app.mount("/mcp-server", mcp_http_app)
     return app
 
 

@@ -55,6 +55,17 @@ class Settings(BaseSettings):
     llm_pro_api_key: str = Field(default="", repr=False)
     llm_pro_model: str = "gemini-2.5-flash"
 
+    llm_embedding_base_url: str = "https://generativelanguage.googleapis.com/v1beta/openai/"
+    llm_embedding_api_key: str = Field(default="", repr=False)
+    llm_embedding_model: str = "gemini-embedding-001"
+    llm_embedding_dim: int = 1536
+
+    # Phase 3 Agent Safety & Rate Limits
+    agent_max_steps: int = 8
+    agent_wall_timeout_seconds: int = 45
+    agent_max_context_tokens: int = 14000
+    guest_chat_rpm: int = 12
+
     @property
     def cors_origin_list(self) -> list[str]:
         return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]

@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import SpotlightBlock from "@/components/SpotlightBlock";
 import StatusConsole from "@/components/StatusConsole";
+import InvestigatorDrawer from "@/components/InvestigatorDrawer";
 import AssetCandlestickChart from "@/components/charts/AssetCandlestickChart";
 import CorrelationHeatmapChart from "@/components/charts/CorrelationHeatmapChart";
 import GexProfileChart from "@/components/charts/GexProfileChart";
@@ -71,6 +72,7 @@ export default function MarketCockpit() {
   const [loading, setLoading] = useState<boolean>(true);
   const [assetLoading, setAssetLoading] = useState<boolean>(false);
   const [syncing, setSyncing] = useState<boolean>(false);
+  const [drawerOpen, setDrawerOpen] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
 
   const loadOverviewAndAssets = useCallback(async () => {
@@ -1195,15 +1197,21 @@ export default function MarketCockpit() {
             <span className="hidden h-3 w-px bg-zinc-700 md:inline-block" />
             <button
               type="button"
-              onClick={() => setViewMode("infra")}
-              className="inline-flex items-center gap-1.5 rounded-full bg-zinc-900 px-3 py-1 font-mono text-[10px] text-zinc-300 ring-1 ring-zinc-700 transition hover:bg-white hover:text-zinc-950"
+              onClick={() => setDrawerOpen(true)}
+              className="inline-flex items-center gap-1.5 rounded-full bg-white px-3.5 py-1 font-mono text-[10px] font-semibold text-zinc-950 transition hover:bg-zinc-200"
             >
               <Sparkles className="h-3 w-3" />
-              Investigator + Risk Critic · Phase 3 Queue
+              Investigator + SEC RAG · Live
             </button>
           </div>
         </motion.div>
       </AnimatePresence>
+
+      <InvestigatorDrawer
+        open={drawerOpen}
+        onClose={() => setDrawerOpen(false)}
+        defaultSymbol={selectedSymbol}
+      />
     </div>
   );
 }

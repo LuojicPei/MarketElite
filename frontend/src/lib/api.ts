@@ -324,3 +324,139 @@ export async function triggerPipelineSync(forceRefresh = false): Promise<{
   }
   return res.json();
 }
+
+export interface AgentStatusResponse {
+  status: "ready" | "llm_key_required";
+  llm_pro_ready: boolean;
+  llm_fast_ready: boolean;
+  llm_pro_model: string;
+  llm_fast_model: string;
+  telemetry_enabled: boolean;
+  phoenix_ui_url: string;
+  mcp_endpoint: string;
+  mcp_tools: { name: string; description: string }[];
+  sec_cached_filings: number;
+  limits: {
+    max_steps: number;
+    wall_timeout_seconds: number;
+    max_context_tokens: number;
+    guest_rpm: number;
+  };
+}
+
+export interface SecChunkResult {
+  chunk_id: number;
+  symbol: string;
+  form_type: string;
+  filing_date: string;
+  section_title: string;
+  rrf_score: number;
+  lexical_rank: number | null;
+  vector_rank: number | null;
+  content: string;
+}
+
+export interface SecSearchResponse {
+  symbol: string;
+  query: string;
+  mode: string;
+  filings: {
+    accession_number: string;
+    form_type: string;
+    filing_date: string;
+    chunk_count: number;
+    cached?: boolean;
+  }[];
+  chunks: SecChunkResult[];
+}
+
+export async function fetchAgentStatus(): Promise<AgentStatusResponse> {
+  const res = await fetch(`${API_BASE}/api/agent/status`, { cache: "no-store" });
+  if (!res.ok) {
+    throw new Error(`Agent status failed (${res.status})`);
+  }
+  return res.json();
+}
+
+export async function searchSecFilings(payload: {
+  symbol: string;
+  query: string;
+  form_type?: string | null;
+  top_k?: number;
+}): Promise<SecSearchResponse> {
+  const res = await fetch(`${API_BASE}/api/rag/sec/search`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      symbol: payload.symbol,
+      query: payload.query,
+      form_type: payload.form_type || null,
+      top_k: payload.top_k ?? 5,
+      auto_ingest: true,
+    }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail || `SEC search failed (${res.status})`);
+  }
+  return res.json();
+}
+
+export interface InvestigateSseEvent {
+  event: string;
+  data: Record<string, unknown>;
+}
+
+export async function streamInvestigate(
+  payload: {
+    thread_id: string;
+    query: string;
+    symbol?: string | null;
+    history?: { role: "user" | "assistant"; content: string }[];
+  },
+  onEvent: (ev: InvestigateSseEvent) => void
+): Promise<void> {
+  const res = await fetch(`${API_BASE}/api/agent/investigate`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: `HTTP ${res.status}` }));
+    throw new Error(err.detail || `Investigation failed (${res.status})`);
+  }
+  if (!res.body) {
+    throw new Error("Empty SSE stream body");
+  }
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder("utf-8");
+  let buffer = "";
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+
+    const frames = buffer.split("\n\n");
+    buffer = frames.pop() ?? "";
+    for (const frame of frames) {
+      let evName = "message";
+      let dataRaw = "";
+      for (const line of frame.split("\n")) {
+        if (line.startsWith("event:")) {
+          evName = line.slice(6).trim();
+        } else if (line.startsWith("data:")) {
+          dataRaw += line.slice(5).trim();
+        }
+      }
+      if (!dataRaw) continue;
+      try {
+        const parsed = JSON.parse(dataRaw) as Record<string, unknown>;
+        onEvent({ event: evName, data: parsed });
+      } catch {
+        // Skip malformed partial frame cleanly
+      }
+    }
+  }
+}

@@ -3,8 +3,10 @@ from __future__ import annotations
 from datetime import date, datetime, timezone
 from typing import Any
 
+from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     Boolean,
+    Computed,
     Date,
     DateTime,
     Float,
@@ -15,7 +17,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
 )
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import JSONB, TSVECTOR
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -266,3 +268,72 @@ class TradeReview(Base):
     )
 
     paper_trade: Mapped[PaperTrade] = relationship(back_populates="reviews")
+
+
+class SecFilingDocument(Base):
+    """Cached metadata for lazy-ingested SEC EDGAR 10-K / 10-Q / 8-K filings."""
+
+    __tablename__ = "sec_filing_cache"
+    __table_args__ = (
+        UniqueConstraint("accession_number", name="uq_sec_filing_accession"),
+        Index("ix_sec_filing_symbol_form_date", "symbol", "form_type", "filing_date"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    symbol: Mapped[str] = mapped_column(String(24), nullable=False)
+    cik: Mapped[str] = mapped_column(String(16), nullable=False)
+    accession_number: Mapped[str] = mapped_column(String(32), nullable=False)
+    form_type: Mapped[str] = mapped_column(String(16), nullable=False)
+    filing_date: Mapped[date] = mapped_column(Date, nullable=False)
+    report_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    primary_document: Mapped[str] = mapped_column(String(255), nullable=False)
+    source_url: Mapped[str] = mapped_column(String(512), nullable=False)
+    chunk_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    has_embeddings: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    ingested_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
+    )
+
+    chunks: Mapped[list[SecFilingChunk]] = relationship(
+        back_populates="filing", cascade="all, delete-orphan"
+    )
+
+
+class SecFilingChunk(Base):
+    """Section-aware SEC filing chunks supporting pgvector cosine + PostgreSQL tsvector BM25."""
+
+    __tablename__ = "sec_filing_chunks"
+    __table_args__ = (
+        Index("ix_sec_filing_chunks_symbol_form", "symbol", "form_type", "filing_date"),
+        Index("ix_sec_filing_chunks_tsv", "search_tsv", postgresql_using="gin"),
+        Index(
+            "ix_sec_filing_chunks_embedding_hnsw",
+            "embedding",
+            postgresql_using="hnsw",
+            postgresql_with={"m": 16, "ef_construction": 64},
+            postgresql_ops={"embedding": "vector_cosine_ops"},
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    filing_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("sec_filing_cache.id", ondelete="CASCADE"), nullable=False
+    )
+    symbol: Mapped[str] = mapped_column(String(24), nullable=False)
+    form_type: Mapped[str] = mapped_column(String(16), nullable=False)
+    filing_date: Mapped[date] = mapped_column(Date, nullable=False)
+    section_title: Mapped[str] = mapped_column(String(160), nullable=False)
+    chunk_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    token_estimate: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    embedding: Mapped[list[float] | None] = mapped_column(Vector(1536), nullable=True)
+    search_tsv: Mapped[Any] = mapped_column(
+        TSVECTOR,
+        Computed(
+            "to_tsvector('english', coalesce(section_title, '') || ' ' || content)",
+            persisted=True,
+        ),
+        nullable=False,
+    )
+
+    filing: Mapped[SecFilingDocument] = relationship(back_populates="chunks")

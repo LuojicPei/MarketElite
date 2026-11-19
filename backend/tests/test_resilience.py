@@ -37,7 +37,10 @@ class InMemoryFakeRedis:
         entry = self._store.get(key)
         return entry[0] if entry is not None else None
 
-    async def set(self, key: str, value: Any, ex: int | None = None) -> bool:
+    async def set(self, key: str, value: Any, ex: int | None = None, nx: bool = False) -> bool:
+        self._evict_if_expired(key)
+        if nx and key in self._store:
+            return False
         expires_at = (time.time() + ex) if ex is not None else None
         self._store[key] = (value, expires_at)
         return True
