@@ -255,8 +255,41 @@ class MacroFeedsClient:
                 resp = await client.get(url, params=params, timeout=15.0)
                 raise_for_provider_response(resp, "finnhub")
                 items = resp.json().get("earningsCalendar", [])
+                focus_tickers = {
+                    "SPY",
+                    "QQQ",
+                    "NVDA",
+                    "AAPL",
+                    "MSFT",
+                    "AMZN",
+                    "META",
+                    "GOOGL",
+                    "GOOG",
+                    "TSLA",
+                    "AVGO",
+                    "AMD",
+                    "PLTR",
+                    "TSM",
+                    "NFLX",
+                    "COIN",
+                    "ORCL",
+                    "CRM",
+                    "MU",
+                    "INTC",
+                    "JPM",
+                    "GS",
+                    "LLY",
+                }
+                items_sorted = sorted(
+                    items,
+                    key=lambda x: (
+                        0 if str(x.get("symbol", "")).upper() in focus_tickers else 1,
+                        str(x.get("date", "9999-12-31")),
+                        0 if x.get("revenueEstimate") else 1,
+                    ),
+                )
                 events: list[dict[str, Any]] = []
-                for item in items[:150]:
+                for item in items_sorted[:200]:
                     sym = str(item.get("symbol", "")).upper()
                     dt_str = str(item.get("date", ""))
                     if not sym or not dt_str:
@@ -269,7 +302,7 @@ class MacroFeedsClient:
                             "symbol": sym,
                             "country": "US",
                             "title": f"{sym} Q{item.get('quarter', '')} {item.get('year', '')} Earnings",
-                            "impact": "High" if sym in {"SPY", "NVDA", "AAPL", "MSFT", "AMZN", "META", "GOOGL", "TSLA", "AVGO"} else "Medium",
+                            "impact": "High" if sym in focus_tickers else "Medium",
                             "eps_actual": item.get("epsActual"),
                             "eps_estimate": item.get("epsEstimate"),
                             "revenue_estimate": item.get("revenueEstimate"),
@@ -287,6 +320,109 @@ class MacroFeedsClient:
             return await _fetch()
         res = await self._cache.get_or_fetch(
             f"marketelite:finnhub:earnings:{from_date}:{to_date}",
+            provider="finnhub",
+            fetcher=_fetch,
+            soft_ttl_seconds=3600 * 6,
+            hard_ttl_seconds=86400 * 3,
+        )
+        return list(res.data)
+
+    async def get_finnhub_company_eps_history(
+        self, symbol: str, *, limit: int = 4
+    ) -> list[dict[str, Any]]:
+        """Fetch historical quarterly EPS actual vs consensus estimate & surprise from Finnhub."""
+        api_key = self._settings.finnhub_api_key.strip()
+        if not api_key:
+            raise ProviderUnconfiguredError("FINNHUB_API_KEY is not configured")
+
+        sym = symbol.upper().strip()
+        url = "https://finnhub.io/api/v1/stock/earnings"
+        params = {"symbol": sym, "limit": limit, "token": api_key}
+
+        async def _fetch() -> list[dict[str, Any]]:
+            async def _exec(client: httpx.AsyncClient) -> list[dict[str, Any]]:
+                resp = await client.get(url, params=params, timeout=15.0)
+                raise_for_provider_response(resp, "finnhub")
+                rows = resp.json()
+                if not isinstance(rows, list):
+                    return []
+                out: list[dict[str, Any]] = []
+                for r in rows[:limit]:
+                    period = str(r.get("period", "")).strip()
+                    if not period:
+                        continue
+                    out.append(
+                        {
+                            "symbol": sym,
+                            "period": period,
+                            "quarter": r.get("quarter"),
+                            "year": r.get("year"),
+                            "actual": r.get("actual"),
+                            "estimate": r.get("estimate"),
+                            "surprise": r.get("surprise"),
+                            "surprise_percent": r.get("surprisePercent"),
+                            "source": "finnhub",
+                        }
+                    )
+                return out
+
+            if self._http_client is not None:
+                return await _exec(self._http_client)
+            async with httpx.AsyncClient() as client:
+                return await _exec(client)
+
+        if self._cache is None:
+            return await _fetch()
+        res = await self._cache.get_or_fetch(
+            f"marketelite:finnhub:company_eps:{sym}",
+            provider="finnhub",
+            fetcher=_fetch,
+            soft_ttl_seconds=3600 * 6,
+            hard_ttl_seconds=86400 * 3,
+        )
+        return list(res.data)
+
+    async def get_finnhub_recommendation_trends(
+        self, symbol: str
+    ) -> list[dict[str, Any]]:
+        """Fetch analyst Buy/Hold/Sell consensus recommendation trends from Finnhub."""
+        api_key = self._settings.finnhub_api_key.strip()
+        if not api_key:
+            raise ProviderUnconfiguredError("FINNHUB_API_KEY is not configured")
+
+        sym = symbol.upper().strip()
+        url = "https://finnhub.io/api/v1/stock/recommendation"
+        params = {"symbol": sym, "token": api_key}
+
+        async def _fetch() -> list[dict[str, Any]]:
+            async def _exec(client: httpx.AsyncClient) -> list[dict[str, Any]]:
+                resp = await client.get(url, params=params, timeout=15.0)
+                raise_for_provider_response(resp, "finnhub")
+                rows = resp.json()
+                if not isinstance(rows, list):
+                    return []
+                return [
+                    {
+                        "symbol": sym,
+                        "period": str(r.get("period", "")),
+                        "strong_buy": int(r.get("strongBuy", 0) or 0),
+                        "buy": int(r.get("buy", 0) or 0),
+                        "hold": int(r.get("hold", 0) or 0),
+                        "sell": int(r.get("sell", 0) or 0),
+                        "strong_sell": int(r.get("strongSell", 0) or 0),
+                    }
+                    for r in rows[:4]
+                ]
+
+            if self._http_client is not None:
+                return await _exec(self._http_client)
+            async with httpx.AsyncClient() as client:
+                return await _exec(client)
+
+        if self._cache is None:
+            return await _fetch()
+        res = await self._cache.get_or_fetch(
+            f"marketelite:finnhub:rec:{sym}",
             provider="finnhub",
             fetcher=_fetch,
             soft_ttl_seconds=3600 * 6,

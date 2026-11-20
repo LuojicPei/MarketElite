@@ -337,3 +337,69 @@ class SecFilingChunk(Base):
     )
 
     filing: Mapped[SecFilingDocument] = relationship(back_populates="chunks")
+
+
+class WatchdogAlert(Base):
+    """Phase 5 intraday anomaly & catalyst Watchdog alerts persisted with deduplication."""
+
+    __tablename__ = "watchdog_alerts"
+    __table_args__ = (
+        UniqueConstraint("alert_key", name="uq_watchdog_alert_key"),
+        Index("ix_watchdog_alerts_created_ack", "created_at", "acknowledged"),
+        Index("ix_watchdog_alerts_symbol", "symbol"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    alert_key: Mapped[str] = mapped_column(String(128), nullable=False)
+    alert_type: Mapped[str] = mapped_column(String(48), nullable=False)
+    severity: Mapped[str] = mapped_column(String(16), nullable=False, default="medium")
+    symbol: Mapped[str | None] = mapped_column(String(24), nullable=True)
+    title: Mapped[str] = mapped_column(String(240), nullable=False)
+    summary_markdown: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    metrics_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    regime_label: Mapped[str | None] = mapped_column(String(48), nullable=True)
+    acknowledged: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
+    )
+
+
+class EpisodicMemory(Base):
+    """Long-term trade & regime attribution memory searchable via tsvector BM25 + pgvector."""
+
+    __tablename__ = "episodic_memories"
+    __table_args__ = (
+        Index("ix_episodic_memories_symbol_regime", "symbol", "regime_label"),
+        Index("ix_episodic_memories_tsv", "search_tsv", postgresql_using="gin"),
+        Index(
+            "ix_episodic_memories_embedding_hnsw",
+            "embedding",
+            postgresql_using="hnsw",
+            postgresql_with={"m": 16, "ef_construction": 64},
+            postgresql_ops={"embedding": "vector_cosine_ops"},
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    paper_trade_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("paper_trades.id", ondelete="SET NULL"), nullable=True
+    )
+    symbol: Mapped[str] = mapped_column(String(24), nullable=False)
+    regime_label: Mapped[str] = mapped_column(String(48), nullable=False, default="UNKNOWN")
+    quadrant_outcome: Mapped[str] = mapped_column(String(64), nullable=False)
+    title: Mapped[str] = mapped_column(String(240), nullable=False)
+    lesson_text: Mapped[str] = mapped_column(Text, nullable=False)
+    tags_json: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
+    alpha_vs_spy_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
+    embedding: Mapped[list[float] | None] = mapped_column(Vector(1536), nullable=True)
+    search_tsv: Mapped[Any] = mapped_column(
+        TSVECTOR,
+        Computed(
+            "to_tsvector('english', coalesce(symbol, '') || ' ' || coalesce(regime_label, '') || ' ' || coalesce(quadrant_outcome, '') || ' ' || coalesce(title, '') || ' ' || lesson_text)",
+            persisted=True,
+        ),
+        nullable=False,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
+    )

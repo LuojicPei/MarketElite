@@ -16,6 +16,7 @@ from app.api.agent import router as agent_router
 from app.api.health import router as health_router
 from app.api.market import router as market_router
 from app.api.trade import router as trade_router
+from app.api.watchdog import router as watchdog_router
 from app.core.clients import InfraManager
 from app.core.config import get_settings
 from app.core.telemetry import init_phoenix_telemetry
@@ -56,7 +57,7 @@ def create_app() -> FastAPI:
 
     app = FastAPI(
         title=f"{settings.app_name} API",
-        version="0.4.0",
+        version="0.5.0",
         description="Production-grade US Equity Market Structure & Multi-Agent Risk Workstation",
         lifespan=lifespan,
     )
@@ -73,6 +74,7 @@ def create_app() -> FastAPI:
     app.include_router(market_router)
     app.include_router(agent_router)
     app.include_router(trade_router)
+    app.include_router(watchdog_router)
     app.mount("/mcp-server", mcp_http_app)
     return app
 

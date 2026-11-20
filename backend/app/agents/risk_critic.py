@@ -14,8 +14,10 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.types import Command, interrupt
 from pydantic import BaseModel, Field
 from sqlalchemy import desc, select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.agents.watchdog import EpisodicMemoryRetriever
 from app.core.config import Settings
 from app.db.models import (
     EconomicCalendarEvent,
@@ -354,6 +356,20 @@ class RiskCriticRunner:
                     )
             except Exception as exc:  # noqa: BLE001
                 logger.warning("Cached SEC lookup skipped in Risk Critic: %s", exc)
+
+            try:
+                mem_retriever = EpisodicMemoryRetriever(runner._settings, runner._session_factory)
+                past_lessons = await mem_retriever.recall(
+                    f"{sym} {facts['regime_label']} {state.get('rationale', '')}",
+                    symbol=sym,
+                    regime_label=facts["regime_label"],
+                    top_k=2,
+                )
+                lesson_block = EpisodicMemoryRetriever.format_memories_for_prompt(past_lessons)
+                if lesson_block:
+                    sec_excerpt = f"{sec_excerpt}\n\n{lesson_block}"
+            except (SQLAlchemyError, AttributeError, TypeError, ValueError, RuntimeError):
+                pass
 
             spot = float(facts["spot_price"] or state.get("entry_price") or 0.0)
             if spot <= 0:

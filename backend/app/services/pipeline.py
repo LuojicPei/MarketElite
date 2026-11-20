@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import logging
+import re
 from collections.abc import Sequence
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
 import httpx
@@ -13,11 +14,13 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.config import Settings
 from app.db.models import (
+    ConsensusEpsSnapshot,
     EconomicCalendarEvent,
     MacroSeriesPoint,
     MarketDailyBar,
     MarketRegimeDaily,
     OptionsGexSnapshot,
+    PaperTrade,
 )
 from app.quant.macro import (
     compute_fear_greed_index,
@@ -517,28 +520,80 @@ async def build_and_persist_overview(
                     "is_stale": snap.is_stale,
                 }
 
+        now_utc = datetime.now(timezone.utc)
         macro_stmt = (
             select(EconomicCalendarEvent)
             .where(
                 EconomicCalendarEvent.event_type == "macro",
-                EconomicCalendarEvent.event_time >= datetime.now(timezone.utc),
+                EconomicCalendarEvent.event_time >= now_utc - timedelta(days=2),
             )
             .order_by(EconomicCalendarEvent.event_time)
-            .limit(10)
+            .limit(40)
         )
+        macro_rows = list((await session.execute(macro_stmt)).scalars().all())
+        macro_rows.sort(
+            key=lambda ev: (
+                0 if (ev.impact or "").lower() == "high" else 1,
+                0 if ev.event_time >= now_utc - timedelta(hours=6) else 1,
+                ev.event_time,
+            )
+        )
+
+        # Prioritize macro focus universe + open paper trade symbols + liquid US leaders
+        focus_earn_symbols: set[str] = {
+            *DEFAULT_EQUITY_UNIVERSE,
+            "AMD",
+            "PLTR",
+            "TSM",
+            "NFLX",
+            "COIN",
+            "ORCL",
+            "CRM",
+            "MU",
+            "INTC",
+            "JPM",
+            "GS",
+            "LLY",
+            "BRK.B",
+        }
+        trade_syms = list(
+            (
+                await session.execute(
+                    select(PaperTrade.symbol).where(
+                        PaperTrade.status.in_(["submitted", "filled", "accepted", "pending_hitl"])
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        focus_earn_symbols.update(s.upper() for s in trade_syms if s)
+
         earn_stmt = (
             select(EconomicCalendarEvent)
             .where(
                 EconomicCalendarEvent.event_type == "earnings",
-                EconomicCalendarEvent.event_time >= datetime.now(timezone.utc),
+                EconomicCalendarEvent.event_time >= now_utc - timedelta(days=1),
             )
             .order_by(EconomicCalendarEvent.event_time)
-            .limit(12)
+            .limit(120)
         )
-        merged_cal = list((await session.execute(macro_stmt)).scalars().all()) + list(
-            (await session.execute(earn_stmt)).scalars().all()
+        earn_rows = list((await session.execute(earn_stmt)).scalars().all())
+        earn_rows.sort(
+            key=lambda ev: (
+                0 if (ev.symbol or "").upper() in focus_earn_symbols else 1,
+                0 if (ev.impact or "").lower() == "high" else 1,
+                ev.event_time,
+            )
         )
-        merged_cal.sort(key=lambda ev: ev.event_time)
+
+        merged_cal = macro_rows[:10] + earn_rows[:14]
+        merged_cal.sort(
+            key=lambda ev: (
+                0 if (ev.event_type == "macro" and (ev.impact or "").lower() == "high") else 1,
+                ev.event_time,
+            )
+        )
         upcoming = [
             {
                 "event_key": ev.event_key,
@@ -547,8 +602,10 @@ async def build_and_persist_overview(
                 "symbol": ev.symbol,
                 "title": ev.title,
                 "impact": ev.impact,
+                "actual": ev.actual,
                 "estimate": ev.estimate,
                 "previous": ev.previous,
+                "eps_actual": ev.eps_actual,
                 "eps_estimate": ev.eps_estimate,
             }
             for ev in merged_cal
@@ -781,3 +838,238 @@ async def run_full_pipeline_sync(
         "regime_label": overview["regime"]["regime_label"],
         "generated_at": overview["generated_at"],
     }
+
+
+_VALID_TICKER_RE = re.compile(r"^[A-Z0-9.\-]{1,12}$")
+
+
+async def ensure_asset_persisted(
+    session_factory: async_sessionmaker[AsyncSession],
+    redis_client: aioredis.Redis | None,
+    settings: Settings,
+    symbol: str,
+    *,
+    include_gex: bool = True,
+    include_eps: bool = True,
+    force_refresh: bool = False,
+) -> dict[str, Any]:
+    """On-demand ingestion for ANY US ticker (bars + Estimated GEX + Finnhub EPS history)."""
+    sym = symbol.upper().strip()
+    if not _VALID_TICKER_RE.match(sym):
+        raise ValueError(f"Invalid ticker symbol '{symbol}'. Expected 1-12 alphanumeric chars.")
+
+    cache = _make_cache(redis_client)
+    now = datetime.now(timezone.utc)
+    bars_status = "cached"
+    gex_status = "skipped"
+    eps_status = "skipped"
+
+    async with session_factory() as session:
+        existing_bars = list(
+            (
+                await session.execute(
+                    select(MarketDailyBar)
+                    .where(MarketDailyBar.symbol == sym)
+                    .order_by(desc(MarketDailyBar.trade_date))
+                    .limit(260)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        existing_gex = (
+            await session.execute(
+                select(OptionsGexSnapshot)
+                .where(OptionsGexSnapshot.symbol == sym)
+                .order_by(desc(OptionsGexSnapshot.snapshot_time))
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+        existing_eps = list(
+            (
+                await session.execute(
+                    select(ConsensusEpsSnapshot)
+                    .where(ConsensusEpsSnapshot.symbol == sym)
+                    .order_by(desc(ConsensusEpsSnapshot.fetched_at))
+                    .limit(4)
+                )
+            )
+            .scalars()
+            .all()
+        )
+
+    need_bars = force_refresh or len(existing_bars) < 20
+    if not need_bars and existing_bars:
+        age_hours = (now - existing_bars[0].fetched_at).total_seconds() / 3600.0
+        if age_hours > 24.0:
+            need_bars = True
+
+    bars_count = len(existing_bars)
+    if need_bars:
+        fetched_bars: list[dict[str, Any]] = []
+        asset_class = "etf" if sym in (CORE_INDEX_ETFS + SECTOR_ETFS) else "equity"
+        source = "alpaca_sip_1d"
+        try:
+            if sym == "BTCUSDT":
+                asset_class = "crypto"
+                source = "coingecko_1d"
+                feeds = MacroFeedsClient(settings, cache=cache)
+                btc_res = await feeds.get_btc_daily_bars(days=365, force_refresh=force_refresh)
+                fetched_bars = list(btc_res.get("bars", []))
+            else:
+                alpaca = AlpacaClient(settings, cache=cache)
+                bar_res = await alpaca.get_daily_bars(
+                    [sym], lookback_days=420, force_refresh=force_refresh
+                )
+                fetched_bars = list((bar_res.get("bars") or {}).get(sym, []))
+        except ProviderUnconfiguredError as exc:
+            bars_status = f"unconfigured: {exc}"
+        except (ProviderError, httpx.HTTPError) as exc:
+            bars_status = f"error: {exc}"
+
+        if fetched_bars:
+            async with session_factory() as session:
+                bars_count = await _upsert_daily_bars(session, sym, asset_class, fetched_bars, source)
+                await session.commit()
+            bars_status = "fetched"
+        elif bars_count == 0:
+            return {
+                "symbol": sym,
+                "found": False,
+                "bars_count": 0,
+                "bars_status": bars_status if bars_status != "cached" else "not_found",
+                "gex_status": "skipped",
+                "eps_status": "skipped",
+            }
+
+    if include_gex and sym != "BTCUSDT":
+        need_gex = force_refresh or existing_gex is None
+        if not need_gex and existing_gex is not None:
+            gex_age_min = (now - existing_gex.snapshot_time).total_seconds() / 60.0
+            need_gex = gex_age_min > 30.0
+        if need_gex:
+            try:
+                alpaca = AlpacaClient(settings, cache=cache)
+                chain = await alpaca.get_options_chain_inputs(sym, force_refresh=force_refresh)
+                gex = compute_estimated_gex(sym, float(chain["spot_price"]), chain["contracts"])
+                async with session_factory() as session:
+                    session.add(
+                        OptionsGexSnapshot(
+                            symbol=gex.symbol,
+                            spot_price=gex.spot_price,
+                            net_gex=gex.net_gex,
+                            call_wall=gex.call_wall,
+                            put_wall=gex.put_wall,
+                            zero_gamma=gex.zero_gamma,
+                            put_call_ratio=gex.put_call_ratio,
+                            total_call_oi=gex.total_call_oi,
+                            total_put_oi=gex.total_put_oi,
+                            contracts_analyzed=gex.contracts_analyzed,
+                            assumption_label=gex.assumption_label,
+                            strike_profile_json=gex.strike_profile,
+                            source=str(chain.get("source", "alpaca_indicative")),
+                            is_stale=bool(chain.get("is_stale", False)),
+                        )
+                    )
+                    await session.commit()
+                gex_status = "fetched"
+            except ProviderUnconfiguredError:
+                gex_status = "unconfigured"
+            except (ProviderError, httpx.HTTPError, ValueError) as exc:
+                gex_status = f"unavailable: {exc}"
+        else:
+            gex_status = "cached"
+
+    if include_eps and sym not in ("BTCUSDT", *CORE_INDEX_ETFS, *SECTOR_ETFS):
+        need_eps = force_refresh or not existing_eps
+        if not need_eps and existing_eps:
+            eps_age_hours = (now - existing_eps[0].fetched_at).total_seconds() / 3600.0
+            need_eps = eps_age_hours > 12.0
+        if need_eps:
+            try:
+                feeds = MacroFeedsClient(settings, cache=cache)
+                eps_rows = await feeds.get_finnhub_company_eps_history(sym, limit=4)
+                if eps_rows:
+                    today = date.today()
+                    db_rows = [
+                        {
+                            "symbol": sym,
+                            "snapshot_date": today,
+                            "period": str(r["period"])[:32],
+                            "eps_avg": _to_float_or_none(r.get("estimate")),
+                            "eps_high": _to_float_or_none(r.get("actual")),
+                            "eps_low": _to_float_or_none(r.get("surprise_percent")),
+                            "number_analysts": None,
+                            "source": "finnhub_earnings",
+                            "fetched_at": now,
+                        }
+                        for r in eps_rows
+                    ]
+                    async with session_factory() as session:
+                        stmt = pg_insert(ConsensusEpsSnapshot).values(db_rows)
+                        stmt = stmt.on_conflict_do_update(
+                            constraint="uq_consensus_eps_symbol_date_period",
+                            set_={
+                                "eps_avg": stmt.excluded.eps_avg,
+                                "eps_high": stmt.excluded.eps_high,
+                                "eps_low": stmt.excluded.eps_low,
+                                "fetched_at": now,
+                            },
+                        )
+                        await session.execute(stmt)
+                        await session.commit()
+                    eps_status = "fetched"
+                else:
+                    eps_status = "empty"
+            except ProviderUnconfiguredError:
+                eps_status = "unconfigured"
+            except (ProviderError, httpx.HTTPError) as exc:
+                eps_status = f"unavailable: {exc}"
+        else:
+            eps_status = "cached"
+
+    return {
+        "symbol": sym,
+        "found": True,
+        "bars_count": bars_count,
+        "bars_status": bars_status,
+        "gex_status": gex_status,
+        "eps_status": eps_status,
+    }
+
+
+async def get_regime_history(
+    session_factory: async_sessionmaker[AsyncSession],
+    *,
+    limit: int = 30,
+) -> list[dict[str, Any]]:
+    """Return chronological 30-day Regime & Fear/Greed history from market_regime_daily."""
+    async with session_factory() as session:
+        rows = list(
+            (
+                await session.execute(
+                    select(MarketRegimeDaily)
+                    .order_by(desc(MarketRegimeDaily.regime_date))
+                    .limit(max(1, min(limit, 90)))
+                )
+            )
+            .scalars()
+            .all()
+        )
+    rows.reverse()
+    return [
+        {
+            "regime_date": r.regime_date.isoformat(),
+            "regime_label": r.regime_label,
+            "fear_greed_score": r.fear_greed_score,
+            "fear_greed_label": r.fear_greed_label,
+            "vix_spot": r.vix_spot,
+            "vix_3m": r.vix_3m,
+            "vix_term_ratio": r.vix_term_ratio,
+            "rsp_spy_ratio": r.rsp_spy_ratio,
+            "pct_above_50ma": r.pct_above_50ma,
+            "hy_oas": r.hy_oas,
+            "net_liquidity_bn": r.net_liquidity_billions,
+        }
+        for r in rows
+    ]

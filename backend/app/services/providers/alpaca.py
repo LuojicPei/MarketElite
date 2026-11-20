@@ -547,3 +547,107 @@ class AlpacaClient:
             return await _execute(self._http_client)
         async with httpx.AsyncClient() as client:
             return await _execute(client)
+
+    async def get_order(self, order_id: str) -> dict[str, Any]:
+        """Fetch a single Alpaca Paper order (with nested bracket legs)."""
+        headers = self._headers()
+        oid = order_id.strip()
+        url = f"{self.trading_base}/v2/orders/{oid}"
+
+        async def _execute(client: httpx.AsyncClient) -> dict[str, Any]:
+            resp = await client.get(url, headers=headers, params={"nested": "true"}, timeout=15.0)
+            raise_for_provider_response(resp, "alpaca_trading")
+            data = resp.json()
+            legs = [
+                {
+                    "id": str(leg.get("id", "")),
+                    "side": str(leg.get("side", "")),
+                    "type": str(leg.get("type", "")),
+                    "status": str(leg.get("status", "")),
+                    "limit_price": leg.get("limit_price"),
+                    "stop_price": leg.get("stop_price"),
+                    "filled_avg_price": leg.get("filled_avg_price"),
+                    "filled_qty": leg.get("filled_qty"),
+                    "filled_at": leg.get("filled_at"),
+                }
+                for leg in (data.get("legs") or [])
+            ]
+            return {
+                "id": str(data.get("id", oid)),
+                "client_order_id": data.get("client_order_id"),
+                "symbol": str(data.get("symbol", "")),
+                "side": str(data.get("side", "")),
+                "qty": str(data.get("qty", "")),
+                "filled_qty": str(data.get("filled_qty", "0")),
+                "order_class": str(data.get("order_class", "simple")),
+                "type": str(data.get("type", "")),
+                "status": str(data.get("status", "")),
+                "filled_avg_price": data.get("filled_avg_price"),
+                "created_at": data.get("created_at"),
+                "filled_at": data.get("filled_at"),
+                "canceled_at": data.get("canceled_at"),
+                "expired_at": data.get("expired_at"),
+                "legs": legs,
+            }
+
+        if self._http_client is not None:
+            return await _execute(self._http_client)
+        async with httpx.AsyncClient() as client:
+            return await _execute(client)
+
+    async def cancel_order(self, order_id: str) -> dict[str, Any]:
+        """Cancel an open Alpaca Paper order by ID."""
+        headers = self._headers()
+        oid = order_id.strip()
+        url = f"{self.trading_base}/v2/orders/{oid}"
+
+        async def _execute(client: httpx.AsyncClient) -> dict[str, Any]:
+            resp = await client.delete(url, headers=headers, timeout=15.0)
+            raise_for_provider_response(resp, "alpaca_trading")
+            return {
+                "order_id": oid,
+                "status": "canceled",
+                "http_status": resp.status_code,
+            }
+
+        if self._http_client is not None:
+            return await _execute(self._http_client)
+        async with httpx.AsyncClient() as client:
+            return await _execute(client)
+
+    async def close_position(
+        self,
+        symbol: str,
+        *,
+        qty: float | None = None,
+        percentage: float | None = None,
+    ) -> dict[str, Any]:
+        """Close an open Alpaca Paper position (full or partial liquidation)."""
+        headers = self._headers()
+        sym = symbol.upper().strip()
+        url = f"{self.trading_base}/v2/positions/{sym}"
+        params: dict[str, str] = {}
+        if qty is not None:
+            params["qty"] = str(qty)
+        elif percentage is not None:
+            params["percentage"] = str(percentage)
+
+        async def _execute(client: httpx.AsyncClient) -> dict[str, Any]:
+            resp = await client.delete(url, headers=headers, params=params or None, timeout=20.0)
+            raise_for_provider_response(resp, "alpaca_trading")
+            data = resp.json() if resp.content else {}
+            return {
+                "id": str(data.get("id", "")),
+                "client_order_id": data.get("client_order_id"),
+                "symbol": str(data.get("symbol", sym)),
+                "side": str(data.get("side", "")),
+                "qty": str(data.get("qty", "")),
+                "status": str(data.get("status", "accepted")),
+                "filled_avg_price": data.get("filled_avg_price"),
+                "submitted_at": data.get("submitted_at"),
+            }
+
+        if self._http_client is not None:
+            return await _execute(self._http_client)
+        async with httpx.AsyncClient() as client:
+            return await _execute(client)

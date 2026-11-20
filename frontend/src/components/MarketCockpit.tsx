@@ -11,12 +11,14 @@ import {
   Layers,
   Newspaper,
   RefreshCw,
+  Search,
   ShieldAlert,
   Sparkles,
 } from "lucide-react";
 import SpotlightBlock from "@/components/SpotlightBlock";
 import StatusConsole from "@/components/StatusConsole";
 import InvestigatorDrawer from "@/components/InvestigatorDrawer";
+import { PortfolioWatchdogView } from "@/components/PortfolioWatchdogView";
 import AssetCandlestickChart from "@/components/charts/AssetCandlestickChart";
 import CorrelationHeatmapChart from "@/components/charts/CorrelationHeatmapChart";
 import GexProfileChart from "@/components/charts/GexProfileChart";
@@ -24,12 +26,21 @@ import NetLiquidityChart from "@/components/charts/NetLiquidityChart";
 import {
   AssetDetailResponse,
   DashboardOverviewResponse,
+  RegimeHistoryPoint,
   TrackedAssetSummary,
+  ensureAsset,
   fetchAssetDetail,
   fetchDashboardOverview,
+  fetchRegimeHistory,
   fetchTrackedAssets,
+  fetchWatchdogAlerts,
   triggerPipelineSync,
 } from "@/lib/api";
+import {
+  formatCreditState,
+  formatDriverText,
+  formatVolumePriceTag,
+} from "@/lib/i18n";
 
 const EASE_EXPO = [0.16, 1, 0.3, 1] as const;
 
@@ -102,10 +113,19 @@ function formatRegimeLabel(label: string | undefined): string {
 }
 
 export default function MarketCockpit() {
-  const [viewMode, setViewMode] = useState<"cockpit" | "infra">("cockpit");
+  const [viewMode, setViewMode] = useState<"cockpit" | "copilot" | "portfolio" | "infra">("cockpit");
   const [overview, setOverview] = useState<DashboardOverviewResponse | null>(null);
   const [trackedAssets, setTrackedAssets] = useState<TrackedAssetSummary[]>([]);
+  const [regimeHistory, setRegimeHistory] = useState<RegimeHistoryPoint[]>([]);
+  const [unackedAlerts, setUnackedAlerts] = useState<number>(0);
+
   const [selectedSymbol, setSelectedSymbol] = useState<string>("SPY");
+  const [tickerSearchInput, setTickerSearchInput] = useState<string>("");
+  const [searchingTicker, setSearchingTicker] = useState<boolean>(false);
+  const [tickerSearchError, setTickerSearchError] = useState<string | null>(null);
+  const [watchlistFilter, setWatchlistFilter] = useState<"all" | "etf" | "equity">("all");
+  const [watchlistSort, setWatchlistSort] = useState<"alpha" | "chg_desc">("alpha");
+
   const [assetDetail, setAssetDetail] = useState<AssetDetailResponse | null>(null);
   const [gexSymbol, setGexSymbol] = useState<"SPY" | "QQQ">("SPY");
   const [calendarFilter, setCalendarFilter] = useState<"all" | "macro" | "earnings">("all");
@@ -118,12 +138,16 @@ export default function MarketCockpit() {
   const loadOverviewAndAssets = useCallback(async () => {
     setError(null);
     try {
-      const [ov, list] = await Promise.all([
+      const [ov, list, hist, alRes] = await Promise.all([
         fetchDashboardOverview(),
         fetchTrackedAssets().catch(() => ({ count: 0, assets: [] })),
+        fetchRegimeHistory(30).catch(() => ({ count: 0, history: [] })),
+        fetchWatchdogAlerts(20).catch(() => ({ count: 0, alerts: [] })),
       ]);
       setOverview(ov);
       setTrackedAssets(list.assets);
+      setRegimeHistory(hist.history);
+      setUnackedAlerts(alRes.alerts.filter((a) => !a.acknowledged).length);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed loading MarketElite cockpit");
     } finally {
@@ -134,7 +158,7 @@ export default function MarketCockpit() {
   const loadAsset = useCallback(async (symbol: string) => {
     setAssetLoading(true);
     try {
-      const detail = await fetchAssetDetail(symbol, 220, true);
+      const detail = await fetchAssetDetail(symbol, 260, true, true);
       setAssetDetail(detail);
     } catch {
       setAssetDetail(null);
@@ -142,6 +166,25 @@ export default function MarketCockpit() {
       setAssetLoading(false);
     }
   }, []);
+
+  const handleGlobalTickerSearch = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const sym = tickerSearchInput.trim().toUpperCase();
+    if (!sym) return;
+    setSearchingTicker(true);
+    setTickerSearchError(null);
+    try {
+      await ensureAsset(sym, false);
+      setSelectedSymbol(sym);
+      const list = await fetchTrackedAssets().catch(() => null);
+      if (list) setTrackedAssets(list.assets);
+      setTickerSearchInput("");
+    } catch (err) {
+      setTickerSearchError(err instanceof Error ? err.message : `未找到美股代码 ${sym}`);
+    } finally {
+      setSearchingTicker(false);
+    }
+  };
 
   useEffect(() => {
     loadOverviewAndAssets();
@@ -174,6 +217,20 @@ export default function MarketCockpit() {
       .filter((x): x is TrackedAssetSummary => Boolean(x));
   }, [trackedAssets]);
 
+  const filteredWatchlist = useMemo(() => {
+    const items = trackedAssets.filter((a) => {
+      if (watchlistFilter === "etf") return a.asset_class === "etf";
+      if (watchlistFilter === "equity") return a.asset_class !== "etf";
+      return true;
+    });
+    if (watchlistSort === "chg_desc") {
+      return [...items].sort(
+        (a, b) => (b.change_1d_pct ?? -999) - (a.change_1d_pct ?? -999)
+      );
+    }
+    return [...items].sort((a, b) => a.symbol.localeCompare(b.symbol));
+  }, [trackedAssets, watchlistFilter, watchlistSort]);
+
   const filteredCalendar = useMemo(() => {
     const events = overview?.positioning_and_calendar?.upcoming_events ?? [];
     if (calendarFilter === "all") return events;
@@ -182,46 +239,10 @@ export default function MarketCockpit() {
 
   const activeGex = overview?.options_gex?.[gexSymbol] ?? null;
 
-  if (viewMode === "infra") {
-    return (
-      <div className="min-h-screen">
-        <div className="sticky top-0 z-40 border-b border-zinc-200/80 bg-white/80 backdrop-blur-md">
-          <div className="mx-auto flex max-w-[1460px] items-center justify-between px-4 py-2.5 sm:px-6">
-            <div className="flex items-center gap-3">
-              <span className="font-serif text-xl italic tracking-tight text-zinc-950">
-                MarketElite
-              </span>
-              <span className="rounded-md border border-zinc-200 bg-zinc-50 px-2 py-0.5 font-mono text-[10px] uppercase tracking-widest text-zinc-500">
-                Infrastructure Console · 基础设施
-              </span>
-            </div>
-            <div className="flex items-center gap-1 rounded-full border border-zinc-200 bg-zinc-100 p-0.5 font-mono text-[11px]">
-              <button
-                type="button"
-                onClick={() => setViewMode("cockpit")}
-                className="rounded-full px-3 py-1 text-zinc-600 transition hover:text-zinc-950"
-              >
-                5-Layer Cockpit 驾驶舱
-              </button>
-              <button
-                type="button"
-                onClick={() => setViewMode("infra")}
-                className="rounded-full bg-zinc-950 px-3 py-1 text-white"
-              >
-                Infra 拓扑
-              </button>
-            </div>
-          </div>
-        </div>
-        <StatusConsole />
-      </div>
-    );
-  }
-
   return (
     <div className="min-h-screen pb-24">
-      {/* Top Sticky Architectural Rail */}
-      <header className="sticky top-0 z-40 border-b border-zinc-200/80 bg-white/80 backdrop-blur-md">
+      {/* Unified Top Sticky Architectural Rail across all 4 Workspaces */}
+      <header className="sticky top-0 z-40 border-b border-zinc-200/80 bg-white/85 backdrop-blur-md">
         <div className="mx-auto flex max-w-[1460px] flex-wrap items-center justify-between gap-3 px-4 py-2.5 sm:px-6">
           <div className="flex items-center gap-3">
             <div className="flex items-center gap-2">
@@ -233,49 +254,51 @@ export default function MarketCockpit() {
                 MarketElite
               </span>
             </div>
-            <span className="hidden rounded-md border border-zinc-200 bg-zinc-50 px-2 py-0.5 font-mono text-[10px] tracking-wider text-zinc-500 md:inline-block">
-              美股结构与风险终端 · US Equity Terminal
+            <span className="hidden rounded-md border border-zinc-200 bg-zinc-50 px-2 py-0.5 font-mono text-[10px] tracking-wider text-zinc-500 2xl:inline-block">
+              US Equity Workstation
             </span>
           </div>
 
           {/* Interactive Live Tape Strip */}
-          <div className="hidden items-center gap-1.5 overflow-x-auto xl:flex">
-            {quickTape.map((item) => {
-              const active = selectedSymbol === item.symbol;
-              return (
-                <button
-                  key={item.symbol}
-                  type="button"
-                  onClick={() => setSelectedSymbol(item.symbol)}
-                  className={`flex items-center gap-2 rounded-lg border px-2.5 py-1 font-mono text-[11px] tabular-nums transition ${
-                    active
-                      ? "border-zinc-950 bg-zinc-950 text-white"
-                      : "border-zinc-200/90 bg-white text-zinc-800 hover:border-zinc-400"
-                  }`}
-                >
-                  <span className="font-semibold">{item.symbol}</span>
-                  <span>
-                    {item.symbol === "BTCUSDT"
-                      ? `$${item.close.toLocaleString(undefined, { maximumFractionDigits: 0 })}`
-                      : `$${item.close.toFixed(2)}`}
-                  </span>
-                  <span
-                    className={
+          {viewMode === "cockpit" && (
+            <div className="hidden items-center gap-1.5 overflow-x-auto xl:flex">
+              {quickTape.map((item) => {
+                const active = selectedSymbol === item.symbol;
+                return (
+                  <button
+                    key={item.symbol}
+                    type="button"
+                    onClick={() => setSelectedSymbol(item.symbol)}
+                    className={`flex items-center gap-2 rounded-lg border px-2.5 py-1 font-mono text-[11px] tabular-nums transition ${
                       active
-                        ? deltaTone(item.change_1d_pct, true)
-                        : deltaTone(item.change_1d_pct, false)
-                    }
+                        ? "border-zinc-950 bg-zinc-950 text-white"
+                        : "border-zinc-200/90 bg-white text-zinc-800 hover:border-zinc-400"
+                    }`}
                   >
-                    {fmtSigned(item.change_1d_pct, 2, "%")}
-                  </span>
-                </button>
-              );
-            })}
-          </div>
+                    <span className="font-semibold">{item.symbol}</span>
+                    <span>
+                      {item.symbol === "BTCUSDT"
+                        ? `$${item.close.toLocaleString(undefined, { maximumFractionDigits: 0 })}`
+                        : `$${item.close.toFixed(2)}`}
+                    </span>
+                    <span
+                      className={
+                        active
+                          ? deltaTone(item.change_1d_pct, true)
+                          : deltaTone(item.change_1d_pct, false)
+                      }
+                    >
+                      {fmtSigned(item.change_1d_pct, 2, "%")}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
 
-          {/* Controls */}
-          <div className="flex items-center gap-2">
-            {overview?.cache_source && (
+          {/* Workspace Switcher & Sync */}
+          <div className="flex flex-wrap items-center gap-2">
+            {overview?.cache_source && viewMode === "cockpit" && (
               <span className="hidden items-center gap-1.5 rounded-full border border-zinc-200 bg-zinc-50 px-2.5 py-1 font-mono text-[10px] text-zinc-600 sm:inline-flex">
                 <Database className="h-3 w-3 text-zinc-500" />
                 {overview.cache_source === "redis" ? "Redis Hot <50ms" : overview.cache_source}
@@ -289,30 +312,63 @@ export default function MarketCockpit() {
               className="inline-flex items-center gap-1.5 rounded-full border border-zinc-200 bg-white px-3 py-1 font-mono text-[11px] text-zinc-800 transition hover:border-zinc-950 disabled:opacity-50"
             >
               <RefreshCw className={`h-3 w-3 ${syncing ? "animate-spin" : ""}`} />
-              {syncing ? "同步中 Syncing..." : "同步 Sync"}
+              {syncing ? "同步中..." : "同步数据"}
             </button>
 
-            <div className="flex items-center gap-1 rounded-full border border-zinc-200 bg-zinc-100 p-0.5 font-mono text-[11px]">
-              <button
-                type="button"
-                onClick={() => setViewMode("cockpit")}
-                className="rounded-full bg-zinc-950 px-3 py-1 text-white"
-              >
-                驾驶舱 Cockpit
-              </button>
-              <button
-                type="button"
-                onClick={() => setViewMode("infra")}
-                className="rounded-full px-3 py-1 text-zinc-600 transition hover:text-zinc-950"
-              >
-                Infra
-              </button>
-            </div>
+            <nav className="flex flex-wrap items-center gap-1 rounded-full border border-zinc-200 bg-zinc-100 p-0.5 font-mono text-[11px]">
+              {(
+                [
+                  { id: "cockpit", label: "驾驶舱" },
+                  { id: "copilot", label: "投研与风控台" },
+                  { id: "portfolio", label: "模拟盘与复盘" },
+                  { id: "infra", label: "系统与评测" },
+                ] as const
+              ).map((tabItem) => (
+                <button
+                  key={tabItem.id}
+                  type="button"
+                  onClick={() => setViewMode(tabItem.id)}
+                  className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 transition ${
+                    viewMode === tabItem.id
+                      ? "bg-zinc-950 font-medium text-white shadow-xs"
+                      : "text-zinc-600 hover:text-zinc-950"
+                  }`}
+                >
+                  <span>{tabItem.label}</span>
+                  {tabItem.id === "portfolio" && unackedAlerts > 0 && (
+                    <span className="rounded-full bg-rose-600 px-1.5 py-0.2 text-[9px] font-bold text-white">
+                      {unackedAlerts}
+                    </span>
+                  )}
+                </button>
+              ))}
+            </nav>
           </div>
         </div>
       </header>
 
-      <main className="mx-auto max-w-[1460px] space-y-5 px-4 pt-5 sm:px-6">
+      {viewMode === "infra" ? (
+        <StatusConsole />
+      ) : viewMode === "copilot" ? (
+        <main className="mx-auto max-w-[1460px] px-4 pt-5 sm:px-6">
+          <InvestigatorDrawer
+            open={true}
+            mode="split"
+            defaultSymbol={selectedSymbol}
+          />
+        </main>
+      ) : viewMode === "portfolio" ? (
+        <main className="mx-auto max-w-[1460px] px-4 pt-5 sm:px-6">
+          <PortfolioWatchdogView
+            onSelectSymbol={(sym) => {
+              setSelectedSymbol(sym);
+              setViewMode("cockpit");
+            }}
+            onAlertCountChange={setUnackedAlerts}
+          />
+        </main>
+      ) : (
+        <main className="mx-auto max-w-[1460px] space-y-5 px-4 pt-5 sm:px-6">
         {error && (
           <div className="flex items-center justify-between rounded-xl border border-rose-300 bg-rose-50 px-4 py-3 font-mono text-xs text-rose-800">
             <span className="flex items-center gap-2">
@@ -427,7 +483,7 @@ export default function MarketCockpit() {
                         {fmtNum(overview?.macro?.yield_credit.hy_oas, 2, "%")}
                       </div>
                       <div className="font-mono text-[11px] text-zinc-400">
-                        {overview?.macro?.yield_credit.credit_state ?? "—"}
+                        {formatCreditState(overview?.macro?.yield_credit.credit_state)}
                       </div>
                     </div>
 
@@ -453,7 +509,7 @@ export default function MarketCockpit() {
                         key={driver}
                         className="rounded-md border border-zinc-800 bg-zinc-900/70 px-2.5 py-1 font-mono text-[11px] text-zinc-300"
                       >
-                        {driver}
+                        {formatDriverText(driver)}
                       </span>
                     ))}
                   </div>
@@ -598,6 +654,35 @@ export default function MarketCockpit() {
                       </span>
                     </div>
                   </div>
+
+                  {/* 30-Day Regime & Fear/Greed Trajectory Strip */}
+                  {regimeHistory.length > 0 && (
+                    <div className="border-t border-zinc-200 pt-3">
+                      <div className="mb-1.5 flex items-center justify-between font-mono text-[10px] text-zinc-500">
+                        <span>近 {regimeHistory.length} 日情绪与体制轨迹 (Fear &amp; Greed Track)</span>
+                        <span>最新 {regimeHistory[regimeHistory.length - 1]?.regime_date}</span>
+                      </div>
+                      <div className="flex h-10 items-end gap-1">
+                        {regimeHistory.slice(-20).map((pt) => {
+                          const score = Math.min(100, Math.max(8, pt.fear_greed_score ?? 40));
+                          const tone =
+                            pt.regime_label === "RISK_OFF_STRESS"
+                              ? "bg-rose-500"
+                              : pt.regime_label === "RISK_ON_EXPANSION"
+                                ? "bg-emerald-600"
+                                : "bg-zinc-700";
+                          return (
+                            <div
+                              key={pt.regime_date}
+                              title={`${pt.regime_date}: ${pt.regime_label} (F&G ${pt.fear_greed_score ?? "—"}, VIX ${pt.vix_spot ?? "—"})`}
+                              className={`flex-1 rounded-t-sm transition-all ${tone}`}
+                              style={{ height: `${score}%` }}
+                            />
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
                 </div>
               </SpotlightBlock>
             </motion.section>
@@ -718,28 +803,87 @@ export default function MarketCockpit() {
                   </div>
                 </div>
 
-                {/* All Tracked Universe Quick Selector */}
-                <div className="mt-4 border-t border-zinc-200 pt-3">
-                  <div className="mb-1.5 flex items-center justify-between font-mono text-[10px] text-zinc-500">
-                    <span>观测资产池 Watchlist ({trackedAssets.length})</span>
-                    <span>
-                      涨跌家数 Adv/Dec: {overview?.equities?.breadth.advances ?? 0}/
-                      {overview?.equities?.breadth.declines ?? 0}
-                    </span>
+                {/* Global Search Any US Ticker + Filtered Watchlist */}
+                <div className="mt-4 space-y-2.5 border-t border-zinc-200 pt-3">
+                  <form onSubmit={handleGlobalTickerSearch} className="flex gap-1.5">
+                    <div className="relative flex-1">
+                      <Search className="pointer-events-none absolute top-1/2 left-2.5 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400" />
+                      <input
+                        type="text"
+                        value={tickerSearchInput}
+                        onChange={(e) => setTickerSearchInput(e.target.value.toUpperCase())}
+                        placeholder="输入任意美股代码直查 K 线/GEX/EPS，如 AMD, PLTR, TSM..."
+                        className="w-full rounded-lg border border-zinc-300 bg-white py-1.5 pr-2 pl-8 font-mono text-[11px] uppercase text-zinc-950 placeholder:normal-case placeholder:text-zinc-400 focus:border-zinc-950 focus:outline-none"
+                      />
+                    </div>
+                    <button
+                      type="submit"
+                      disabled={searchingTicker || !tickerSearchInput.trim()}
+                      className="rounded-lg bg-zinc-950 px-3 py-1.5 font-mono text-[11px] font-medium text-white transition hover:bg-zinc-800 disabled:opacity-40"
+                    >
+                      {searchingTicker ? "拉取中..." : "调入看盘"}
+                    </button>
+                  </form>
+                  {tickerSearchError && (
+                    <p className="font-mono text-[10px] text-rose-600">{tickerSearchError}</p>
+                  )}
+
+                  <div className="flex flex-wrap items-center justify-between gap-2 font-mono text-[10px] text-zinc-500">
+                    <span>观测资产池 Watchlist ({filteredWatchlist.length})</span>
+                    <div className="flex items-center gap-1">
+                      {(
+                        [
+                          { id: "all", label: "全部" },
+                          { id: "etf", label: "ETF" },
+                          { id: "equity", label: "个股" },
+                        ] as const
+                      ).map((f) => (
+                        <button
+                          key={f.id}
+                          type="button"
+                          onClick={() => setWatchlistFilter(f.id)}
+                          className={`rounded px-1.5 py-0.5 ${
+                            watchlistFilter === f.id
+                              ? "bg-zinc-950 text-white"
+                              : "bg-zinc-100 text-zinc-600 hover:bg-zinc-200"
+                          }`}
+                        >
+                          {f.label}
+                        </button>
+                      ))}
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setWatchlistSort((s) => (s === "alpha" ? "chg_desc" : "alpha"))
+                        }
+                        className="rounded border border-zinc-200 px-1.5 py-0.5 text-zinc-600 hover:bg-zinc-100"
+                      >
+                        {watchlistSort === "alpha" ? "A→Z" : "涨幅↓"}
+                      </button>
+                    </div>
                   </div>
+
                   <div className="flex max-h-28 flex-wrap gap-1.5 overflow-y-auto pr-1">
-                    {trackedAssets.map((a) => (
+                    {filteredWatchlist.map((a) => (
                       <button
                         key={a.symbol}
                         type="button"
                         onClick={() => setSelectedSymbol(a.symbol)}
-                        className={`rounded border px-1.5 py-0.5 font-mono text-[10px] transition ${
+                        className={`inline-flex items-center gap-1 rounded border px-1.5 py-0.5 font-mono text-[10px] transition ${
                           selectedSymbol === a.symbol
                             ? "border-zinc-950 bg-zinc-950 text-white"
                             : "border-zinc-200 bg-white text-zinc-700 hover:border-zinc-400"
                         }`}
                       >
-                        {a.symbol}
+                        <span>{a.symbol}</span>
+                        {a.change_1d_pct !== null && (
+                          <span
+                            className={deltaTone(a.change_1d_pct, selectedSymbol === a.symbol)}
+                          >
+                            {a.change_1d_pct >= 0 ? "+" : ""}
+                            {a.change_1d_pct.toFixed(1)}%
+                          </span>
+                        )}
                       </button>
                     ))}
                   </div>
@@ -779,7 +923,7 @@ export default function MarketCockpit() {
                     </div>
 
                     <span className="rounded-md border border-zinc-800 bg-zinc-900 px-2.5 py-1 font-mono text-[10px] text-zinc-300">
-                      {assetDetail?.technicals.volume_price_tag ?? "Loading volume regime..."}
+                      {formatVolumePriceTag(assetDetail?.technicals.volume_price_tag)}
                     </span>
                   </div>
 
@@ -846,6 +990,68 @@ export default function MarketCockpit() {
                     />
                   )}
                 </div>
+
+                {/* Focused Ticker Estimated GEX & Finnhub EPS / Analyst Consensus Strip */}
+                {(assetDetail?.options_gex ||
+                  (assetDetail?.eps_history && assetDetail.eps_history.length > 0) ||
+                  (assetDetail?.recommendations && assetDetail.recommendations.length > 0)) && (
+                  <div className="mt-3 grid grid-cols-1 gap-2.5 border-t border-zinc-800 pt-3 sm:grid-cols-2">
+                    {assetDetail?.options_gex && (
+                      <div className="rounded-xl border border-zinc-800 bg-zinc-950/70 p-2.5 font-mono text-[11px]">
+                        <div className="text-[10px] text-zinc-400">
+                          {selectedSymbol} 估算期权墙 (Estimated GEX)
+                        </div>
+                        <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 tabular-nums">
+                          <span className={deltaTone(assetDetail.options_gex.net_gex, true)}>
+                            Net {fmtBillions(assetDetail.options_gex.net_gex)}
+                          </span>
+                          <span className="text-emerald-400">
+                            Call ${assetDetail.options_gex.call_wall?.toFixed(0) ?? "—"}
+                          </span>
+                          <span className="text-rose-400">
+                            Put ${assetDetail.options_gex.put_wall?.toFixed(0) ?? "—"}
+                          </span>
+                          <span className="text-amber-400">
+                            ZG ${assetDetail.options_gex.zero_gamma?.toFixed(2) ?? "—"}
+                          </span>
+                        </div>
+                      </div>
+                    )}
+
+                    {assetDetail?.eps_history && assetDetail.eps_history.length > 0 && (
+                      <div className="rounded-xl border border-zinc-800 bg-zinc-950/70 p-2.5 font-mono text-[11px]">
+                        <div className="flex items-center justify-between text-[10px] text-zinc-400">
+                          <span>Finnhub 季度 EPS 实际 vs 预期</span>
+                          {assetDetail.recommendations?.[0] && (
+                            <span className="text-zinc-300">
+                              评级 买{assetDetail.recommendations[0].strong_buy + assetDetail.recommendations[0].buy}/持{assetDetail.recommendations[0].hold}/卖{assetDetail.recommendations[0].sell + assetDetail.recommendations[0].strong_sell}
+                            </span>
+                          )}
+                        </div>
+                        <div className="mt-1 grid grid-cols-2 gap-1.5 text-[10px] tabular-nums">
+                          {assetDetail.eps_history.slice(0, 2).map((ep) => (
+                            <div key={ep.period} className="rounded bg-zinc-900 px-2 py-1">
+                              <span className="text-zinc-400">{ep.period.slice(0, 7)} </span>
+                              <span className="text-white">
+                                {ep.actual !== null ? `$${ep.actual.toFixed(2)}` : "—"}
+                              </span>
+                              <span className="text-zinc-500">
+                                {" "}
+                                / Est {ep.estimate !== null ? `$${ep.estimate.toFixed(2)}` : "—"}
+                              </span>
+                              {ep.surprise_percent !== null && (
+                                <span className={` ml-1 ${deltaTone(ep.surprise_percent, true)}`}>
+                                  ({ep.surprise_percent >= 0 ? "+" : ""}
+                                  {ep.surprise_percent.toFixed(1)}%)
+                                </span>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 {/* Compact News Strip (if available from Alpaca) */}
                 {assetDetail?.news && assetDetail.news.length > 0 && (
@@ -1219,11 +1425,38 @@ export default function MarketCockpit() {
                           </div>
                         </div>
 
-                        {ev.eps_estimate !== null && (
-                          <span className="shrink-0 font-mono text-[11px] text-zinc-300 tabular-nums">
-                            Est ${ev.eps_estimate.toFixed(2)}
-                          </span>
-                        )}
+                        {(ev.actual !== null && ev.actual !== undefined) ||
+                        ev.estimate !== null ||
+                        ev.eps_actual != null ||
+                        ev.eps_estimate !== null ? (
+                          <div className="shrink-0 text-right font-mono text-[10px] tabular-nums">
+                            {ev.event_type === "macro" ? (
+                              <>
+                                {ev.actual != null && (
+                                  <span className="block font-semibold text-emerald-400">
+                                    实际 {ev.actual}
+                                  </span>
+                                )}
+                                {ev.estimate != null && (
+                                  <span className="text-zinc-400">预期 {ev.estimate}</span>
+                                )}
+                              </>
+                            ) : (
+                              <>
+                                {ev.eps_actual != null && (
+                                  <span className="block font-semibold text-emerald-400">
+                                    实际 ${ev.eps_actual.toFixed(2)}
+                                  </span>
+                                )}
+                                {ev.eps_estimate !== null && (
+                                  <span className="text-zinc-300">
+                                    Est ${ev.eps_estimate.toFixed(2)}
+                                  </span>
+                                )}
+                              </>
+                            )}
+                          </div>
+                        ) : null}
                       </div>
                     ))
                   )}
@@ -1233,16 +1466,17 @@ export default function MarketCockpit() {
           </>
         )}
       </main>
+      )}
 
-      {/* Bottom Floating Phase 3 Command Capsule */}
+      {/* Bottom Floating Phase 3–5 Command Capsule */}
       <AnimatePresence>
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.45, delay: 0.22, ease: EASE_EXPO }}
-          className="pointer-events-none fixed inset-x-0 bottom-4 z-50 flex justify-center px-4"
+          className="pointer-events-none fixed inset-x-0 bottom-4 z-40 flex justify-center px-4"
         >
-          <div className="pointer-events-auto flex flex-wrap items-center gap-3 rounded-full border border-zinc-800 bg-[#0B0B0D]/95 px-4 py-2 text-white shadow-[0_20px_50px_-12px_rgba(0,0,0,0.65)] backdrop-blur-md">
+          <div className="pointer-events-auto flex flex-wrap items-center gap-2.5 rounded-full border border-zinc-800 bg-[#0B0B0D]/95 px-4 py-2 text-white shadow-[0_20px_50px_-12px_rgba(0,0,0,0.65)] backdrop-blur-md">
             <span className="flex items-center gap-1.5 font-mono text-[11px] text-zinc-300">
               <Cpu className="h-3.5 w-3.5 text-emerald-400" />
               焦点 Focus: <strong className="text-white">{selectedSymbol}</strong>
@@ -1257,19 +1491,28 @@ export default function MarketCockpit() {
             <span className="hidden h-3 w-px bg-zinc-700 md:inline-block" />
             <button
               type="button"
-              onClick={() => setDrawerOpen(true)}
+              onClick={() => setDrawerOpen((v) => !v)}
+              className="inline-flex items-center gap-1.5 rounded-full border border-zinc-700 bg-zinc-900 px-3 py-1 font-mono text-[10px] text-zinc-100 transition hover:border-zinc-500"
+            >
+              <Sparkles className="h-3 w-3 text-emerald-400" />
+              {drawerOpen ? "收起侧边协查舱" : "AI 侧边协查舱"}
+            </button>
+            <button
+              type="button"
+              onClick={() => setViewMode("copilot")}
               className="inline-flex items-center gap-1.5 rounded-full bg-white px-3.5 py-1 font-mono text-[10px] font-semibold text-zinc-950 transition hover:bg-zinc-200"
             >
-              <Sparkles className="h-3 w-3" />
-              Investigator 投研 · SEC · Risk Critic 风控
+              双栏投研与风控台 →
             </button>
           </div>
         </motion.div>
       </AnimatePresence>
 
       <InvestigatorDrawer
-        open={drawerOpen}
+        open={drawerOpen && viewMode === "cockpit"}
+        mode="drawer"
         onClose={() => setDrawerOpen(false)}
+        onOpenFullWorkspace={() => setViewMode("copilot")}
         defaultSymbol={selectedSymbol}
       />
     </div>

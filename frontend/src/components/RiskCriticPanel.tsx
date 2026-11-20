@@ -240,83 +240,99 @@ export default function RiskCriticPanel({
           </span>
         </div>
 
-        <div className="grid grid-cols-2 gap-2 sm:grid-cols-6">
-          <input
-            type="text"
-            value={symbol}
-            onChange={(e) => setSymbol(e.target.value.toUpperCase())}
-            placeholder="NVDA"
-            className="rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-1.5 font-mono text-xs uppercase text-white focus:border-zinc-400 focus:outline-none"
-          />
-          <select
-            value={side}
-            onChange={(e) => setSide(e.target.value as "buy" | "sell")}
-            className="rounded-lg border border-zinc-700 bg-zinc-950 px-2.5 py-1.5 font-mono text-xs text-white focus:border-zinc-400 focus:outline-none"
-          >
-            <option value="buy">BUY 做多</option>
-            <option value="sell">SELL 做空</option>
-          </select>
-          <input
-            type="number"
-            min="1"
-            step="1"
-            value={proposedQty}
-            onChange={(e) => setProposedQty(e.target.value)}
-            placeholder="拟买股数 Qty"
-            title="拟买股数 Proposed Qty"
-            className="rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-1.5 font-mono text-xs text-white focus:border-zinc-400 focus:outline-none"
-          />
-          <input
-            type="number"
-            step="0.1"
-            min="0.1"
-            max="2.0"
-            value={riskPct}
-            onChange={(e) => setRiskPct(e.target.value)}
-            placeholder="Risk %"
-            title="单笔最大账户风险预算 %"
-            className="rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-1.5 font-mono text-xs text-white focus:border-zinc-400 focus:outline-none"
-          />
-          <input
-            type="number"
-            step="0.01"
-            value={stopLoss}
-            onChange={(e) => setStopLoss(e.target.value)}
-            placeholder="Stop Loss (自动)"
-            title="止损价 (留空按 ATR / Put Wall 自动推导)"
-            className="rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-1.5 font-mono text-xs text-white placeholder:text-zinc-500 focus:border-zinc-400 focus:outline-none"
-          />
-          <input
-            type="number"
-            step="0.01"
-            value={takeProfit}
-            onChange={(e) => setTakeProfit(e.target.value)}
-            placeholder="Take Profit (自动)"
-            title="止盈价 (留空按 2R / Call Wall 自动推导)"
-            className="rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-1.5 font-mono text-xs text-white placeholder:text-zinc-500 focus:border-zinc-400 focus:outline-none"
-          />
+        <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3">
+          <div>
+            <label className="mb-1 block font-mono text-[10px] text-zinc-400">代码 Symbol</label>
+            <input
+              type="text"
+              value={symbol}
+              onChange={(e) => setSymbol(e.target.value.toUpperCase())}
+              placeholder="NVDA"
+              className="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-2.5 py-1.5 font-mono text-xs uppercase text-white focus:border-zinc-400 focus:outline-none"
+            />
+          </div>
+          <div>
+            <label className="mb-1 block font-mono text-[10px] text-zinc-400">方向 Side</label>
+            <select
+              value={side}
+              onChange={(e) => setSide(e.target.value as "buy" | "sell")}
+              className="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-2.5 py-1.5 font-mono text-xs text-white focus:border-zinc-400 focus:outline-none"
+            >
+              <option value="buy">BUY 做多</option>
+              <option value="sell">SELL 做空</option>
+            </select>
+          </div>
+          <div>
+            <label className="mb-1 block font-mono text-[10px] text-zinc-400">股数 Qty</label>
+            <input
+              type="number"
+              min="1"
+              step="1"
+              value={proposedQty}
+              onChange={(e) => setProposedQty(e.target.value)}
+              placeholder="Qty"
+              className="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-2.5 py-1.5 font-mono text-xs text-white focus:border-zinc-400 focus:outline-none"
+            />
+          </div>
+          <div>
+            <label className="mb-1 block font-mono text-[10px] text-zinc-400">预算 Risk %</label>
+            <input
+              type="number"
+              step="0.1"
+              min="0.1"
+              max="2.0"
+              value={riskPct}
+              onChange={(e) => setRiskPct(e.target.value)}
+              placeholder="1.0"
+              className="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-2.5 py-1.5 font-mono text-xs text-white focus:border-zinc-400 focus:outline-none"
+            />
+          </div>
+          <div>
+            <label className="mb-1 block font-mono text-[10px] text-zinc-400">止损 Stop Loss</label>
+            <input
+              type="number"
+              step="0.01"
+              value={stopLoss}
+              onChange={(e) => setStopLoss(e.target.value)}
+              placeholder="自动推导"
+              className="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-2.5 py-1.5 font-mono text-xs text-white placeholder:text-zinc-500 focus:border-zinc-400 focus:outline-none"
+            />
+          </div>
+          <div>
+            <label className="mb-1 block font-mono text-[10px] text-zinc-400">止盈 Take Profit</label>
+            <input
+              type="number"
+              step="0.01"
+              value={takeProfit}
+              onChange={(e) => setTakeProfit(e.target.value)}
+              placeholder="自动推导"
+              className="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-2.5 py-1.5 font-mono text-xs text-white placeholder:text-zinc-500 focus:border-zinc-400 focus:outline-none"
+            />
+          </div>
         </div>
 
-        <div className="flex flex-col gap-2 sm:flex-row">
-          <input
-            type="number"
-            step="0.01"
-            value={entryPrice}
-            onChange={(e) => setEntryPrice(e.target.value)}
-            placeholder="参考入场价 (留空用现价)"
-            className="rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-1.5 font-mono text-xs text-white placeholder:text-zinc-500 focus:border-zinc-400 focus:outline-none sm:w-48"
-          />
-          <input
-            type="text"
-            value={rationale}
-            onChange={(e) => setRationale(e.target.value)}
-            placeholder="简述交易逻辑（Risk Critic 将刻意隔离情绪、只查硬数据与财报日历反驳你）"
-            className="flex-1 rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-1.5 text-xs text-white placeholder:text-zinc-500 focus:border-zinc-400 focus:outline-none"
-          />
+        <div className="space-y-2">
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+            <input
+              type="number"
+              step="0.01"
+              value={entryPrice}
+              onChange={(e) => setEntryPrice(e.target.value)}
+              placeholder="参考入场价 (留空用现价)"
+              className="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-1.5 font-mono text-xs text-white placeholder:text-zinc-500 focus:border-zinc-400 focus:outline-none"
+            />
+            <input
+              type="text"
+              value={rationale}
+              onChange={(e) => setRationale(e.target.value)}
+              placeholder="简述交易逻辑（Risk Critic 将隔离情绪、反驳审核）"
+              className="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-1.5 text-xs text-white placeholder:text-zinc-500 focus:border-zinc-400 focus:outline-none sm:col-span-2"
+            />
+          </div>
           <button
             type="submit"
             disabled={submitting}
-            className="inline-flex shrink-0 items-center justify-center gap-1.5 rounded-lg bg-white px-4 py-2 font-mono text-xs font-semibold text-zinc-950 transition hover:bg-zinc-200 disabled:opacity-50"
+            className="inline-flex w-full items-center justify-center gap-1.5 rounded-lg bg-white px-4 py-2 font-mono text-xs font-semibold text-zinc-950 transition hover:bg-zinc-200 disabled:opacity-50"
           >
             <ShieldAlert className="h-3.5 w-3.5" />
             {submitting ? "Critic 审查中..." : "唤醒 Risk Critic 审查"}

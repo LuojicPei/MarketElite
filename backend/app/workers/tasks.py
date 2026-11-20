@@ -3,6 +3,8 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from app.agents.watchdog import reflect_on_trade, run_watchdog_scan
+from app.api.trade import sync_paper_trade_statuses
 from app.services.pipeline import (
     build_and_persist_overview,
     run_full_pipeline_sync,
@@ -65,3 +67,23 @@ async def job_full_bootstrap_sync(
         ctx["settings"],
         force_refresh=force_refresh,
     )
+
+
+async def job_run_watchdog_and_reflect(ctx: dict[str, Any]) -> dict[str, Any]:
+    """Scheduled Phase 5 job: intraday anomaly alerts + closed trade reflections."""
+    session_factory = ctx["session_factory"]
+    settings = ctx["settings"]
+    scan_res = await run_watchdog_scan(session_factory, settings, use_fast_llm=True)
+    sync_res = await sync_paper_trade_statuses(session_factory, settings)
+    reflected = 0
+    for trade_id in sync_res.get("newly_closed_trade_ids", []):
+        try:
+            await reflect_on_trade(session_factory, settings, int(trade_id), use_fast_llm=True)
+            reflected += 1
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Post-close reflection failed for trade %s: %s", trade_id, exc)
+    return {
+        "scan": scan_res,
+        "trade_sync": sync_res,
+        "reflected": reflected,
+    }

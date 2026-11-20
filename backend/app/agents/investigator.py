@@ -23,8 +23,10 @@ from langchain_mcp_adapters.client import MultiServerMCPClient
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
 from pydantic import BaseModel, Field
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.agents.watchdog import EpisodicMemoryRetriever
 from app.core.config import Settings
 from app.mcp_servers.market_server import (
     get_asset_structure,
@@ -46,9 +48,9 @@ logger = logging.getLogger(__name__)
 
 _SYSTEM_PROMPT = """You are MarketElite Investigator, an institutional US equity market-structure analyst.
 Rules:
-1. Ground EVERY price, indicator, macro rate, and filing citation strictly in tool outputs or injected Regime Context. Never invent prices, EPS numbers, or dates.
-2. Explicitly note when referencing Estimated GEX that it relies on Dealer Positioning Assumptions & OCC T+1/T+2 OI.
-3. Keep analysis concise, structured, and objective: Macro/Regime Context -> Asset Technicals & Options Walls -> Fundamental/SEC Risk Citations -> Key Factual Risks.
+1. Language & Format: Respond in clear Simplified Chinese mixed with accurate English financial terms (e.g., Estimated GEX, Zero Gamma, Call Wall, RVOL, HY OAS, 10-K/10-Q) unless the user explicitly writes solely in English. Use structured Markdown headings (`### 1. 核心判断`, `### 2. 市场结构与期权墙`, `### 3. 基本面 / SEC 依据`, `### 4. 主要风险`) and concise bullet points/tables.
+2. Ground EVERY price, indicator, macro rate, and filing citation strictly in tool outputs or injected Regime/Memory Context. Never invent prices, EPS numbers, or dates.
+3. Explicitly note when referencing Estimated GEX that it relies on Dealer Positioning Assumptions & OCC T+1/T+2 OI.
 4. For deep 10-K/10-Q multi-angle audits of a company, invoke `run_sec_parallel_audit` once rather than looping repeatedly on individual SEC snippets.
 5. Never claim to execute orders; order execution is separated into Risk Critic + HITL."""
 
@@ -274,6 +276,19 @@ class InvestigatorAgentRunner:
             regime_ctx = state.get("regime_context") or await get_market_regime_snapshot()
             msgs = list(state.get("messages", []))
             rolling = state.get("rolling_summary", "")
+
+            if "[Historical Episodic Lessons" not in regime_ctx and callable(self._session_factory):
+                try:
+                    last_q = str(msgs[-1].content) if msgs else ""
+                    retriever = EpisodicMemoryRetriever(self._settings, self._session_factory)
+                    memories = await retriever.recall(
+                        last_q, symbol=state.get("symbol"), top_k=2
+                    )
+                    mem_text = EpisodicMemoryRetriever.format_memories_for_prompt(memories)
+                    if mem_text:
+                        regime_ctx = f"{regime_ctx}\n\n{mem_text}".strip()
+                except (SQLAlchemyError, AttributeError, TypeError, ValueError, RuntimeError):
+                    pass
 
             # Rolling Summarization when conversation turns grow long
             total_tokens = sum(estimate_text_tokens(str(m.content)) for m in msgs)

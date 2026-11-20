@@ -15,6 +15,7 @@ from app.db.session import (
 )
 from app.workers.tasks import (
     job_full_bootstrap_sync,
+    job_run_watchdog_and_reflect,
     job_sync_calendars_and_cot,
     job_sync_equities_and_options,
     job_sync_macro_and_cboe,
@@ -60,11 +61,14 @@ class WorkerSettings:
         job_sync_equities_and_options,
         job_sync_calendars_and_cot,
         job_full_bootstrap_sync,
+        job_run_watchdog_and_reflect,
     ]
 
     cron_jobs: ClassVar[list[Any]] = [
         # Refresh intraday US market bars, BTC, and SPY/QQQ GEX every 15m Mon-Fri
         cron(job_sync_equities_and_options, weekday={0, 1, 2, 3, 4}, minute={0, 15, 30, 45}),
+        # Run Phase 5 Watchdog scan & paper trade reflection every 30m (:20, :50) Mon-Fri
+        cron(job_run_watchdog_and_reflect, weekday={0, 1, 2, 3, 4}, minute={20, 50}),
         # Refresh FRED macro series and CBOE VIX term structure hourly at :05
         cron(job_sync_macro_and_cboe, minute={5}),
         # Refresh macro/earnings calendars and CFTC weekly positioning twice daily

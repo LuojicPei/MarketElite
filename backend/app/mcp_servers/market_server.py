@@ -4,6 +4,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Any
 
+import httpx
 import redis.asyncio as aioredis
 from mcp.server.fastmcp import FastMCP
 from pydantic import Field
@@ -21,7 +22,7 @@ from app.db.session import create_db_engine, create_session_factory
 from app.quant.technicals import DailyBarInput, analyze_asset_technicals
 from app.rag.hybrid_search import HybridSecRetriever
 from app.services.llm_router import estimate_text_tokens
-from app.services.pipeline import OVERVIEW_CACHE_KEY
+from app.services.pipeline import OVERVIEW_CACHE_KEY, ensure_asset_persisted
 from app.services.providers.alpaca import AlpacaClient
 from app.services.resilience import DualTTLCache, ProviderError
 
@@ -143,7 +144,7 @@ async def get_asset_structure(
     symbol: str = Field(description="US stock, ETF, or BTCUSDT ticker symbol, e.g. SPY, QQQ, NVDA."),
 ) -> str:
     """Return compressed deterministic technicals, RVOL 4-quadrant state, Estimated GEX walls & headlines (~280 tokens)."""
-    settings, session_factory, _ = _get_runtime()
+    settings, session_factory, redis_client = _get_runtime()
     sym = symbol.upper().strip()
     if not sym or len(sym) > 16:
         raise ValueError("Ticker symbol must be 1-16 characters.")
@@ -166,8 +167,39 @@ async def get_asset_structure(
         )
         gex = (await session.execute(gex_stmt)).scalar_one_or_none()
 
+    if not db_bars or (sym != "BTCUSDT" and gex is None):
+        try:
+            await ensure_asset_persisted(
+                session_factory,
+                redis_client,
+                settings,
+                sym,
+                include_gex=(sym != "BTCUSDT"),
+                include_eps=True,
+                force_refresh=False,
+            )
+        except (ProviderError, httpx.HTTPError, ValueError, OSError, RuntimeError) as exc:  # pragma: no cover - defensive runtime fallback
+            logger.warning("On-demand ensure_asset_persisted warning for %s: %s", sym, exc)
+
+        async with session_factory() as session:
+            bar_stmt = (
+                select(MarketDailyBar)
+                .where(MarketDailyBar.symbol == sym)
+                .order_by(desc(MarketDailyBar.trade_date))
+                .limit(260)
+            )
+            db_bars = list((await session.execute(bar_stmt)).scalars().all())
+            db_bars.reverse()
+            gex_stmt = (
+                select(OptionsGexSnapshot)
+                .where(OptionsGexSnapshot.symbol == sym)
+                .order_by(desc(OptionsGexSnapshot.snapshot_time))
+                .limit(1)
+            )
+            gex = (await session.execute(gex_stmt)).scalar_one_or_none()
+
     if not db_bars:
-        return f"No daily bars persisted in PostgreSQL for {sym}."
+        return f"No daily bars persisted in PostgreSQL for {sym} after live lookup."
 
     bars = [
         DailyBarInput(

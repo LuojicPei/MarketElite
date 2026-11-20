@@ -67,6 +67,7 @@ export default function AssetCandlestickChart({
   height = 330,
 }: AssetCandlestickChartProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const [rangeKey, setRangeKey] = useState<"1M" | "3M" | "6M" | "1Y">("6M");
   const [showEma20, setShowEma20] = useState(true);
   const [showSma50, setShowSma50] = useState(true);
   const [showSma200, setShowSma200] = useState(false);
@@ -213,7 +214,15 @@ export default function AssetCandlestickChart({
       }
     }
 
-    chart.timeScale().fitContent();
+    const barsWindow = rangeKey === "1M" ? 22 : rangeKey === "3M" ? 63 : rangeKey === "6M" ? 126 : sortedBars.length;
+    if (rangeKey === "1Y" || sortedBars.length <= barsWindow) {
+      chart.timeScale().fitContent();
+    } else {
+      chart.timeScale().setVisibleLogicalRange({
+        from: Math.max(0, sortedBars.length - barsWindow),
+        to: sortedBars.length + 1,
+      });
+    }
 
     const observer = new ResizeObserver((entries) => {
       const width = entries[0]?.contentRect.width;
@@ -227,14 +236,39 @@ export default function AssetCandlestickChart({
       observer.disconnect();
       chart.remove();
     };
-  }, [sortedBars, height, showEma20, showSma50, showSma200, gex]);
+  }, [sortedBars, height, rangeKey, showEma20, showSma50, showSma200, gex]);
 
   return (
     <div className="space-y-2">
       <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] font-mono">
-        <span className="text-zinc-400">
-          {symbol} · Consolidated Daily OHLCV + Volume
-        </span>
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-zinc-400">
+            {symbol} · 日线 OHLCV + 成交量
+          </span>
+          <div className="inline-flex rounded-md border border-zinc-800 bg-zinc-900/80 p-0.5">
+            {(
+              [
+                { key: "1M", label: "1M" },
+                { key: "3M", label: "3M" },
+                { key: "6M", label: "6M" },
+                { key: "1Y", label: "全部" },
+              ] as const
+            ).map((tf) => (
+              <button
+                key={tf.key}
+                type="button"
+                onClick={() => setRangeKey(tf.key)}
+                className={`rounded px-2 py-0.5 text-[10px] transition ${
+                  rangeKey === tf.key
+                    ? "bg-zinc-100 font-semibold text-zinc-950"
+                    : "text-zinc-400 hover:text-zinc-100"
+                }`}
+              >
+                {tf.label}
+              </button>
+            ))}
+          </div>
+        </div>
         <div className="flex items-center gap-1.5">
           <button
             type="button"

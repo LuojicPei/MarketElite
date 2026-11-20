@@ -1,0 +1,581 @@
+[
+  {
+    "id": "REG-01",
+    "category": "regime_macro",
+    "name": "Risk-Off Stress under VIX Backwardation + Widening HY OAS",
+    "evaluator": "regime_classify",
+    "input": {
+      "vix_spot": 31.2,
+      "vix_term_ratio": 1.12,
+      "hy_oas": 4.9,
+      "net_liq_delta_20d": -85.0,
+      "spy_dist_50ma_pct": -3.1,
+      "pct_above_50ma": 24.0
+    },
+    "expected": {
+      "regime_label": "RISK_OFF_STRESS"
+    }
+  },
+  {
+    "id": "REG-02",
+    "category": "regime_macro",
+    "name": "Risk-On Expansion under Contango + Net Liquidity Inflow",
+    "evaluator": "regime_classify",
+    "input": {
+      "vix_spot": 13.8,
+      "vix_term_ratio": 0.86,
+      "hy_oas": 2.95,
+      "net_liq_delta_20d": 120.0,
+      "spy_dist_50ma_pct": 2.4,
+      "pct_above_50ma": 72.0
+    },
+    "expected": {
+      "regime_label": "RISK_ON_EXPANSION"
+    }
+  },
+  {
+    "id": "REG-03",
+    "category": "regime_macro",
+    "name": "Liquidity Tightening with Normal VIX but Weak Breadth & Liquidity Drain",
+    "evaluator": "regime_classify",
+    "input": {
+      "vix_spot": 17.4,
+      "vix_term_ratio": 0.94,
+      "hy_oas": 3.55,
+      "net_liq_delta_20d": -135.0,
+      "spy_dist_50ma_pct": -2.1,
+      "pct_above_50ma": 30.0
+    },
+    "expected": {
+      "regime_label": "LIQUIDITY_TIGHTENING"
+    }
+  },
+  {
+    "id": "REG-04",
+    "category": "regime_macro",
+    "name": "High Volatility Transition Regime",
+    "evaluator": "regime_classify",
+    "input": {
+      "vix_spot": 24.5,
+      "vix_term_ratio": 1.03,
+      "hy_oas": 3.7,
+      "net_liq_delta_20d": 15.0,
+      "spy_dist_50ma_pct": -0.6,
+      "pct_above_50ma": 46.0
+    },
+    "expected": {
+      "regime_label_in": ["HIGH_VOL_TRANSITION", "RISK_OFF_STRESS"]
+    }
+  },
+  {
+    "id": "REG-05",
+    "category": "regime_macro",
+    "name": "Net Liquidity Accounting Identity (WALCL - TGA - RRP)",
+    "evaluator": "net_liquidity",
+    "input": {
+      "walcl_mn": 7000000.0,
+      "tga_mn": 800000.0,
+      "rrp_bn": 200.0
+    },
+    "expected": {
+      "net_liq_bn": 6000.0
+    }
+  },
+  {
+    "id": "REG-06",
+    "category": "regime_macro",
+    "name": "Neutral Rotation under Narrow Leadership",
+    "evaluator": "regime_classify",
+    "input": {
+      "vix_spot": 16.5,
+      "vix_term_ratio": 0.96,
+      "hy_oas": 3.8,
+      "net_liq_delta_20d": -5.0,
+      "spy_dist_50ma_pct": 0.4,
+      "pct_above_50ma": 54.0
+    },
+    "expected": {
+      "regime_label_in": ["NEUTRAL_ROTATION", "RISK_ON_EXPANSION"]
+    }
+  },
+  {
+    "id": "REG-07",
+    "category": "regime_macro",
+    "name": "Fear & Greed Score Bounded 0..100 Extreme Greed",
+    "evaluator": "fear_greed",
+    "input": {
+      "spy_dist_200ma_pct": 10.5,
+      "spy_20d_return_pct": 5.5,
+      "pct_above_50ma": 78.0,
+      "rsp_spy_20d_delta_pct": 2.5,
+      "vix_spot": 12.0,
+      "vix_vix3m_ratio": 0.84,
+      "hy_oas": 2.75
+    },
+    "expected": {
+      "min_score": 65,
+      "max_score": 100
+    }
+  },
+  {
+    "id": "REG-08",
+    "category": "regime_macro",
+    "name": "Fear & Greed Score Bounded 0..100 Extreme Fear",
+    "evaluator": "fear_greed",
+    "input": {
+      "spy_dist_200ma_pct": -7.5,
+      "spy_20d_return_pct": -5.5,
+      "pct_above_50ma": 22.0,
+      "rsp_spy_20d_delta_pct": -3.5,
+      "vix_spot": 34.0,
+      "vix_vix3m_ratio": 1.11,
+      "hy_oas": 5.8
+    },
+    "expected": {
+      "min_score": 0,
+      "max_score": 35
+    }
+  },
+  {
+    "id": "GEX-01",
+    "category": "options_gex",
+    "name": "Negative Net GEX with Spot Below Zero Gamma",
+    "evaluator": "gex_calc",
+    "input": {
+      "symbol": "SPY",
+      "spot": 575.0,
+      "contracts": [
+        {"strike": 590.0, "option_type": "call", "gamma": 0.02, "open_interest": 10000},
+        {"strike": 570.0, "option_type": "put", "gamma": 0.045, "open_interest": 22000}
+      ]
+    },
+    "expected": {
+      "net_gex_negative": true,
+      "call_wall": 590.0,
+      "put_wall": 570.0
+    }
+  },
+  {
+    "id": "GEX-02",
+    "category": "options_gex",
+    "name": "Positive Net GEX Pinning Around Dominant Call Wall",
+    "evaluator": "gex_calc",
+    "input": {
+      "symbol": "QQQ",
+      "spot": 500.0,
+      "contracts": [
+        {"strike": 510.0, "option_type": "call", "gamma": 0.04, "open_interest": 30000},
+        {"strike": 485.0, "option_type": "put", "gamma": 0.015, "open_interest": 8000}
+      ]
+    },
+    "expected": {
+      "net_gex_positive": true,
+      "call_wall": 510.0,
+      "put_wall": 485.0
+    }
+  },
+  {
+    "id": "GEX-03",
+    "category": "options_gex",
+    "name": "Zero Gamma Crossover Interpolation Exists Between Opposite Strikes",
+    "evaluator": "gex_calc",
+    "input": {
+      "symbol": "NVDA",
+      "spot": 135.0,
+      "contracts": [
+        {"strike": 145.0, "option_type": "call", "gamma": 0.03, "open_interest": 25000},
+        {"strike": 125.0, "option_type": "put", "gamma": 0.03, "open_interest": 25000}
+      ]
+    },
+    "expected": {
+      "zero_gamma_between": [125.0, 145.0]
+    }
+  },
+  {
+    "id": "GEX-04",
+    "category": "options_gex",
+    "name": "Estimated GEX Assumption Disclosure Always Present",
+    "evaluator": "gex_calc",
+    "input": {
+      "symbol": "AMD",
+      "spot": 140.0,
+      "contracts": [
+        {"strike": 150.0, "option_type": "call", "gamma": 0.03, "open_interest": 12000}
+      ]
+    },
+    "expected": {
+      "assumption_contains": "Estimated GEX"
+    }
+  },
+  {
+    "id": "TECH-01",
+    "category": "options_gex",
+    "name": "RVOL >= 1.5 Up-Day Accumulation Classification",
+    "evaluator": "technicals_rvol",
+    "input": {
+      "price_trend": "up_surge",
+      "volume_spike": 2.4
+    },
+    "expected": {
+      "volume_tag_contains": "ACCUMULATION"
+    }
+  },
+  {
+    "id": "TECH-02",
+    "category": "options_gex",
+    "name": "RVOL >= 1.5 Down-Day Distribution Classification",
+    "evaluator": "technicals_rvol",
+    "input": {
+      "price_trend": "down_dump",
+      "volume_spike": 2.6
+    },
+    "expected": {
+      "volume_tag_contains": "DISTRIBUTION"
+    }
+  },
+  {
+    "id": "TECH-03",
+    "category": "options_gex",
+    "name": "Low RVOL Down-Day Flags Orderly Pullback",
+    "evaluator": "technicals_rvol",
+    "input": {
+      "price_trend": "down_drift",
+      "volume_spike": 0.55
+    },
+    "expected": {
+      "volume_tag_contains": "LOW-VOLUME PULLBACK"
+    }
+  },
+  {
+    "id": "TECH-04",
+    "category": "options_gex",
+    "name": "EMA20 & RSI14 Computed Properly on 60 Daily Bars",
+    "evaluator": "technicals_rvol",
+    "input": {
+      "price_trend": "up_surge",
+      "volume_spike": 1.1
+    },
+    "expected": {
+      "has_rsi_and_ema20": true
+    }
+  },
+  {
+    "id": "RISK-01",
+    "category": "risk_critic",
+    "name": "1% Hard Capital Cap Clamps Oversized 1000-Share Long Proposal",
+    "evaluator": "risk_sizing",
+    "input": {
+      "symbol": "NVDA",
+      "side": "buy",
+      "account_equity": 100000.0,
+      "buying_power": 150000.0,
+      "spot_price": 140.0,
+      "proposed_qty": 1000.0,
+      "stop_loss_price": 135.0,
+      "take_profit_price": 155.0,
+      "atr_14": 4.0,
+      "risk_budget_pct": 1.0
+    },
+    "expected": {
+      "was_capped_by_risk": true,
+      "max_recommended_qty": 200,
+      "bracket_valid": true
+    }
+  },
+  {
+    "id": "RISK-02",
+    "category": "risk_critic",
+    "name": "Invalid Long Stop-Loss Above Entry Rejected Deterministically",
+    "evaluator": "risk_sizing",
+    "input": {
+      "symbol": "AAPL",
+      "side": "buy",
+      "account_equity": 100000.0,
+      "buying_power": 100000.0,
+      "spot_price": 225.0,
+      "proposed_qty": 50.0,
+      "entry_price": 225.0,
+      "stop_loss_price": 230.0,
+      "take_profit_price": 240.0,
+      "atr_14": 3.5,
+      "risk_budget_pct": 1.0
+    },
+    "expected": {
+      "bracket_valid": false
+    }
+  },
+  {
+    "id": "RISK-03",
+    "category": "risk_critic",
+    "name": "Valid Short Bracket Sizing Computes Positive Risk-Reward",
+    "evaluator": "risk_sizing",
+    "input": {
+      "symbol": "TSLA",
+      "side": "sell",
+      "account_equity": 100000.0,
+      "buying_power": 150000.0,
+      "spot_price": 300.0,
+      "proposed_qty": 40.0,
+      "entry_price": 300.0,
+      "stop_loss_price": 310.0,
+      "take_profit_price": 275.0,
+      "atr_14": 9.0,
+      "risk_budget_pct": 1.0
+    },
+    "expected": {
+      "bracket_valid": true,
+      "min_rr": 2.0
+    }
+  },
+  {
+    "id": "RISK-04",
+    "category": "risk_critic",
+    "name": "Oversized Risk Budget Request Clamped Internally to Max Allowed",
+    "evaluator": "risk_sizing",
+    "input": {
+      "symbol": "AMD",
+      "side": "buy",
+      "account_equity": 50000.0,
+      "buying_power": 50000.0,
+      "spot_price": 150.0,
+      "proposed_qty": 300.0,
+      "stop_loss_price": 140.0,
+      "take_profit_price": 175.0,
+      "atr_14": 5.0,
+      "risk_budget_pct": 1.0
+    },
+    "expected": {
+      "was_capped_by_risk": true,
+      "max_recommended_qty": 50,
+      "bracket_valid": true
+    }
+  },
+  {
+    "id": "RISK-05",
+    "category": "risk_critic",
+    "name": "Missing Stop/Take-Profit Auto-Derived From ATR & Options Walls",
+    "evaluator": "risk_sizing",
+    "input": {
+      "symbol": "MSFT",
+      "side": "buy",
+      "account_equity": 100000.0,
+      "buying_power": 100000.0,
+      "spot_price": 420.0,
+      "proposed_qty": 25.0,
+      "atr_14": 7.0,
+      "put_wall": 405.0,
+      "call_wall": 440.0,
+      "risk_budget_pct": 1.0
+    },
+    "expected": {
+      "bracket_valid": true,
+      "has_auto_levels": true
+    }
+  },
+  {
+    "id": "RISK-06",
+    "category": "risk_critic",
+    "name": "Deterministic Critique Counter-Arguments Always Non-Empty",
+    "evaluator": "risk_critique",
+    "input": {
+      "symbol": "SPY",
+      "side": "buy",
+      "regime_label": "RISK_OFF_STRESS",
+      "zero_gamma": 590.0,
+      "spot_price": 580.0,
+      "upcoming_catalysts": [{"title": "US CPI MoM", "impact": "High"}]
+    },
+    "expected": {
+      "regime_alignment": "COUNTER_TREND",
+      "min_counter_args": 2,
+      "verdict_in": ["CAUTION_REDUCED", "REJECTED_HIGH_RISK"]
+    }
+  },
+  {
+    "id": "RISK-07",
+    "category": "risk_critic",
+    "name": "Insufficient Buying Power Caps Proposed Shares Below Full Cash Allocation",
+    "evaluator": "risk_sizing",
+    "input": {
+      "symbol": "AAPL",
+      "side": "buy",
+      "account_equity": 100000.0,
+      "buying_power": 9000.0,
+      "spot_price": 225.0,
+      "proposed_qty": 100.0,
+      "stop_loss_price": 220.0,
+      "take_profit_price": 240.0,
+      "atr_14": 3.0,
+      "risk_budget_pct": 1.0
+    },
+    "expected": {
+      "max_recommended_qty": 40,
+      "bracket_valid": true
+    }
+  },
+  {
+    "id": "RISK-08",
+    "category": "risk_critic",
+    "name": "Tiny Equity Fractional Case Rejects When Even 1 Share Exceeds Buying Power",
+    "evaluator": "risk_sizing",
+    "input": {
+      "symbol": "COST",
+      "side": "buy",
+      "account_equity": 1000.0,
+      "buying_power": 500.0,
+      "spot_price": 900.0,
+      "proposed_qty": 5.0,
+      "stop_loss_price": 880.0,
+      "take_profit_price": 950.0,
+      "atr_14": 15.0,
+      "risk_budget_pct": 1.0
+    },
+    "expected": {
+      "max_recommended_qty": 0
+    }
+  },
+  {
+    "id": "WDOG-01",
+    "category": "watchdog_safety",
+    "name": "4-Quadrant Good Process + Positive PnL Classification",
+    "evaluator": "quadrant_attr",
+    "input": {
+      "side": "buy",
+      "qty": 50,
+      "entry_price": 100.0,
+      "stop_loss_price": 96.0,
+      "take_profit_price": 110.0,
+      "risk_budget_pct": 0.9,
+      "realized_pnl": 420.0,
+      "spy_benchmark_return_pct": 1.2,
+      "regime_at_entry": "RISK_ON_EXPANSION"
+    },
+    "expected": {
+      "quadrant": "GOOD_PROCESS_GOOD_OUTCOME",
+      "min_process_score": 85
+    }
+  },
+  {
+    "id": "WDOG-02",
+    "category": "watchdog_safety",
+    "name": "4-Quadrant Good Process + Valid Stop-Out Loss Classification",
+    "evaluator": "quadrant_attr",
+    "input": {
+      "side": "buy",
+      "qty": 50,
+      "entry_price": 100.0,
+      "stop_loss_price": 96.0,
+      "take_profit_price": 110.0,
+      "risk_budget_pct": 0.95,
+      "realized_pnl": -200.0,
+      "spy_benchmark_return_pct": 0.5,
+      "regime_at_entry": "NEUTRAL_ROTATION"
+    },
+    "expected": {
+      "quadrant": "GOOD_PROCESS_BAD_OUTCOME"
+    }
+  },
+  {
+    "id": "WDOG-03",
+    "category": "watchdog_safety",
+    "name": "4-Quadrant Bad Process + Lucky Gain Flags Survivor Bias Hazard",
+    "evaluator": "quadrant_attr",
+    "input": {
+      "side": "buy",
+      "qty": 100,
+      "entry_price": 100.0,
+      "stop_loss_price": null,
+      "take_profit_price": null,
+      "risk_budget_pct": 2.5,
+      "realized_pnl": 350.0,
+      "spy_benchmark_return_pct": 1.0,
+      "regime_at_entry": "RISK_OFF_STRESS"
+    },
+    "expected": {
+      "quadrant": "BAD_PROCESS_GOOD_OUTCOME"
+    }
+  },
+  {
+    "id": "WDOG-04",
+    "category": "watchdog_safety",
+    "name": "4-Quadrant Bad Process + Loss Classification",
+    "evaluator": "quadrant_attr",
+    "input": {
+      "side": "buy",
+      "qty": 100,
+      "entry_price": 100.0,
+      "stop_loss_price": null,
+      "take_profit_price": 108.0,
+      "risk_budget_pct": 3.0,
+      "realized_pnl": -800.0,
+      "spy_benchmark_return_pct": 0.2,
+      "regime_at_entry": "RISK_OFF_STRESS"
+    },
+    "expected": {
+      "quadrant": "BAD_PROCESS_BAD_OUTCOME"
+    }
+  },
+  {
+    "id": "SAFE-01",
+    "category": "watchdog_safety",
+    "name": "Trade Intent Detector Extracts Chinese Buy Proposal Cleanly",
+    "evaluator": "trade_intent",
+    "input": {
+      "query": "我想在当前位置买入 80 股 NVDA，先帮我提交风控审查",
+      "symbol": "NVDA"
+    },
+    "expected": {
+      "detected": true,
+      "symbol": "NVDA",
+      "side": "buy",
+      "proposed_qty": 80.0
+    }
+  },
+  {
+    "id": "SAFE-02",
+    "category": "watchdog_safety",
+    "name": "Research Query Does Not False-Trigger Trade Intent Execution",
+    "evaluator": "trade_intent",
+    "input": {
+      "query": "分析一下 AMD 最近的 10-Q 毛利率变化和期权 Call Wall 结构",
+      "symbol": "AMD"
+    },
+    "expected": {
+      "detected": false
+    }
+  },
+  {
+    "id": "SAFE-03",
+    "category": "watchdog_safety",
+    "name": "Canonical Tool Fingerprint Prevents Identical Argument Loops",
+    "evaluator": "fingerprint_dedup",
+    "input": {
+      "tool": "get_asset_structure",
+      "args_a": {"symbol": "NVDA"},
+      "args_b": {"symbol": "NVDA"}
+    },
+    "expected": {
+      "identical_hash": true
+    }
+  },
+  {
+    "id": "SAFE-04",
+    "category": "watchdog_safety",
+    "name": "RRF Hybrid Fusion Boosts Dual Lexical+Vector Match Above Single Hit",
+    "evaluator": "rrf_fusion",
+    "input": {
+      "query": "export controls china revenue",
+      "vector_chunks": [
+        {"chunk_id": 10, "symbol": "NVDA", "form_type": "10-K", "filing_date": "2026-02-26", "section_title": "Item 1A Risk Factors", "chunk_index": 2, "content": "Export control restrictions limit China GPU sales."},
+        {"chunk_id": 11, "symbol": "NVDA", "form_type": "10-K", "filing_date": "2026-02-26", "section_title": "Cover & Executive Overview", "chunk_index": 0, "content": "Cover summary."}
+      ],
+      "lexical_chunks": [
+        {"chunk_id": 10, "symbol": "NVDA", "form_type": "10-K", "filing_date": "2026-02-26", "section_title": "Item 1A Risk Factors", "chunk_index": 2, "content": "Export control restrictions limit China GPU sales."},
+        {"chunk_id": 12, "symbol": "NVDA", "form_type": "10-K", "filing_date": "2026-02-26", "section_title": "Item 7 MD&A", "chunk_index": 5, "content": "Gross margin expansion."}
+      ]
+    },
+    "expected": {
+      "top_chunk_id": 10
+    }
+  }
+]

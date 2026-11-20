@@ -1,0 +1,403 @@
+{
+  "status": "ok",
+  "generated_at": "2026-11-20T08:45:35Z",
+  "total_cases": 32,
+  "passed_cases": 32,
+  "pass_rate_pct": 100.0,
+  "duration_ms": 2.25,
+  "categories": {
+    "regime_macro": {
+      "total": 8,
+      "passed": 8,
+      "pass_rate_pct": 100.0
+    },
+    "options_gex": {
+      "total": 8,
+      "passed": 8,
+      "pass_rate_pct": 100.0
+    },
+    "risk_critic": {
+      "total": 8,
+      "passed": 8,
+      "pass_rate_pct": 100.0
+    },
+    "watchdog_safety": {
+      "total": 8,
+      "passed": 8,
+      "pass_rate_pct": 100.0
+    }
+  },
+  "results": [
+    {
+      "id": "REG-01",
+      "category": "regime_macro",
+      "name": "Risk-Off Stress under VIX Backwardation + Widening HY OAS",
+      "passed": true,
+      "elapsed_ms": 0.01,
+      "observed": {
+        "regime_label": "RISK_OFF_STRESS",
+        "stress_score": 8
+      }
+    },
+    {
+      "id": "REG-02",
+      "category": "regime_macro",
+      "name": "Risk-On Expansion under Contango + Net Liquidity Inflow",
+      "passed": true,
+      "elapsed_ms": 0.0,
+      "observed": {
+        "regime_label": "RISK_ON_EXPANSION",
+        "stress_score": 0
+      }
+    },
+    {
+      "id": "REG-03",
+      "category": "regime_macro",
+      "name": "Liquidity Tightening with Normal VIX but Weak Breadth & Liquidity Drain",
+      "passed": true,
+      "elapsed_ms": 0.0,
+      "observed": {
+        "regime_label": "LIQUIDITY_TIGHTENING",
+        "stress_score": 3
+      }
+    },
+    {
+      "id": "REG-04",
+      "category": "regime_macro",
+      "name": "High Volatility Transition Regime",
+      "passed": true,
+      "elapsed_ms": 0.0,
+      "observed": {
+        "regime_label": "RISK_OFF_STRESS",
+        "stress_score": 4
+      }
+    },
+    {
+      "id": "REG-05",
+      "category": "regime_macro",
+      "name": "Net Liquidity Accounting Identity (WALCL - TGA - RRP)",
+      "passed": true,
+      "elapsed_ms": 0.02,
+      "observed": {
+        "net_liq_bn": 6000.0
+      }
+    },
+    {
+      "id": "REG-06",
+      "category": "regime_macro",
+      "name": "Neutral Rotation under Narrow Leadership",
+      "passed": true,
+      "elapsed_ms": 0.0,
+      "observed": {
+        "regime_label": "NEUTRAL_ROTATION",
+        "stress_score": 0
+      }
+    },
+    {
+      "id": "REG-07",
+      "category": "regime_macro",
+      "name": "Fear & Greed Score Bounded 0..100 Extreme Greed",
+      "passed": true,
+      "elapsed_ms": 0.02,
+      "observed": {
+        "score": 92.7,
+        "label": "Extreme Greed"
+      }
+    },
+    {
+      "id": "REG-08",
+      "category": "regime_macro",
+      "name": "Fear & Greed Score Bounded 0..100 Extreme Fear",
+      "passed": true,
+      "elapsed_ms": 0.01,
+      "observed": {
+        "score": 6.3,
+        "label": "Extreme Fear"
+      }
+    },
+    {
+      "id": "GEX-01",
+      "category": "options_gex",
+      "name": "Negative Net GEX with Spot Below Zero Gamma",
+      "passed": true,
+      "elapsed_ms": 0.09,
+      "observed": {
+        "net_gex": -261193750.0,
+        "call_wall": 590.0,
+        "put_wall": 570.0,
+        "zero_gamma": 586.64
+      }
+    },
+    {
+      "id": "GEX-02",
+      "category": "options_gex",
+      "name": "Positive Net GEX Pinning Around Dominant Call Wall",
+      "passed": true,
+      "elapsed_ms": 0.04,
+      "observed": {
+        "net_gex": 270000000.0,
+        "call_wall": 510.0,
+        "put_wall": 485.0,
+        "zero_gamma": 487.27
+      }
+    },
+    {
+      "id": "GEX-03",
+      "category": "options_gex",
+      "name": "Zero Gamma Crossover Interpolation Exists Between Opposite Strikes",
+      "passed": true,
+      "elapsed_ms": 0.03,
+      "observed": {
+        "net_gex": 0.0,
+        "call_wall": 145.0,
+        "put_wall": 125.0,
+        "zero_gamma": 135.0
+      }
+    },
+    {
+      "id": "GEX-04",
+      "category": "options_gex",
+      "name": "Estimated GEX Assumption Disclosure Always Present",
+      "passed": true,
+      "elapsed_ms": 0.02,
+      "observed": {
+        "net_gex": 7056000.0,
+        "call_wall": 150.0,
+        "put_wall": null,
+        "zero_gamma": null
+      }
+    },
+    {
+      "id": "TECH-01",
+      "category": "options_gex",
+      "name": "RVOL >= 1.5 Up-Day Accumulation Classification",
+      "passed": true,
+      "elapsed_ms": 0.43,
+      "observed": {
+        "volume_price_tag": "Volume Expansion Up (Accumulation / Breakout)",
+        "rvol_20": 2.4,
+        "rsi_14": 100.0
+      }
+    },
+    {
+      "id": "TECH-02",
+      "category": "options_gex",
+      "name": "RVOL >= 1.5 Down-Day Distribution Classification",
+      "passed": true,
+      "elapsed_ms": 0.28,
+      "observed": {
+        "volume_price_tag": "Volume Expansion Down (Distribution / Stress)",
+        "rvol_20": 2.6,
+        "rsi_14": 0.0
+      }
+    },
+    {
+      "id": "TECH-03",
+      "category": "options_gex",
+      "name": "Low RVOL Down-Day Flags Orderly Pullback",
+      "passed": true,
+      "elapsed_ms": 0.26,
+      "observed": {
+        "volume_price_tag": "Low-Volume Pullback (Orderly Digestion)",
+        "rvol_20": 0.55,
+        "rsi_14": 0.0
+      }
+    },
+    {
+      "id": "TECH-04",
+      "category": "options_gex",
+      "name": "EMA20 & RSI14 Computed Properly on 60 Daily Bars",
+      "passed": true,
+      "elapsed_ms": 0.25,
+      "observed": {
+        "volume_price_tag": "Low-Volume Drift Up (Thin Conviction)",
+        "rvol_20": 1.1,
+        "rsi_14": 100.0
+      }
+    },
+    {
+      "id": "RISK-01",
+      "category": "risk_critic",
+      "name": "1% Hard Capital Cap Clamps Oversized 1000-Share Long Proposal",
+      "passed": true,
+      "elapsed_ms": 0.07,
+      "observed": {
+        "recommended_qty": 178,
+        "was_capped_by_risk": true,
+        "bracket_valid": true
+      }
+    },
+    {
+      "id": "RISK-02",
+      "category": "risk_critic",
+      "name": "Invalid Long Stop-Loss Above Entry Rejected Deterministically",
+      "passed": true,
+      "elapsed_ms": 0.03,
+      "observed": {
+        "recommended_qty": 50,
+        "was_capped_by_risk": false,
+        "bracket_valid": false
+      }
+    },
+    {
+      "id": "RISK-03",
+      "category": "risk_critic",
+      "name": "Valid Short Bracket Sizing Computes Positive Risk-Reward",
+      "passed": true,
+      "elapsed_ms": 0.03,
+      "observed": {
+        "recommended_qty": 40,
+        "was_capped_by_risk": false,
+        "bracket_valid": true
+      }
+    },
+    {
+      "id": "RISK-04",
+      "category": "risk_critic",
+      "name": "Oversized Risk Budget Request Clamped Internally to Max Allowed",
+      "passed": true,
+      "elapsed_ms": 0.03,
+      "observed": {
+        "recommended_qty": 50,
+        "was_capped_by_risk": true,
+        "bracket_valid": true
+      }
+    },
+    {
+      "id": "RISK-05",
+      "category": "risk_critic",
+      "name": "Missing Stop/Take-Profit Auto-Derived From ATR & Options Walls",
+      "passed": true,
+      "elapsed_ms": 0.03,
+      "observed": {
+        "recommended_qty": 25,
+        "was_capped_by_risk": false,
+        "bracket_valid": true
+      }
+    },
+    {
+      "id": "RISK-06",
+      "category": "risk_critic",
+      "name": "Deterministic Critique Counter-Arguments Always Non-Empty",
+      "passed": true,
+      "elapsed_ms": 0.04,
+      "observed": {
+        "verdict": "CAUTION_REDUCED",
+        "alignment": "COUNTER_TREND"
+      }
+    },
+    {
+      "id": "RISK-07",
+      "category": "risk_critic",
+      "name": "Insufficient Buying Power Caps Proposed Shares Below Full Cash Allocation",
+      "passed": true,
+      "elapsed_ms": 0.03,
+      "observed": {
+        "recommended_qty": 38,
+        "was_capped_by_risk": false,
+        "bracket_valid": true
+      }
+    },
+    {
+      "id": "RISK-08",
+      "category": "risk_critic",
+      "name": "Tiny Equity Fractional Case Rejects When Even 1 Share Exceeds Buying Power",
+      "passed": true,
+      "elapsed_ms": 0.03,
+      "observed": {
+        "recommended_qty": 0,
+        "was_capped_by_risk": true,
+        "bracket_valid": false
+      }
+    },
+    {
+      "id": "WDOG-01",
+      "category": "watchdog_safety",
+      "name": "4-Quadrant Good Process + Positive PnL Classification",
+      "passed": true,
+      "elapsed_ms": 0.01,
+      "observed": {
+        "quadrant": "GOOD_PROCESS_GOOD_OUTCOME",
+        "process_score": 100
+      }
+    },
+    {
+      "id": "WDOG-02",
+      "category": "watchdog_safety",
+      "name": "4-Quadrant Good Process + Valid Stop-Out Loss Classification",
+      "passed": true,
+      "elapsed_ms": 0.0,
+      "observed": {
+        "quadrant": "GOOD_PROCESS_BAD_OUTCOME",
+        "process_score": 100
+      }
+    },
+    {
+      "id": "WDOG-03",
+      "category": "watchdog_safety",
+      "name": "4-Quadrant Bad Process + Lucky Gain Flags Survivor Bias Hazard",
+      "passed": true,
+      "elapsed_ms": 0.0,
+      "observed": {
+        "quadrant": "BAD_PROCESS_GOOD_OUTCOME",
+        "process_score": 0
+      }
+    },
+    {
+      "id": "WDOG-04",
+      "category": "watchdog_safety",
+      "name": "4-Quadrant Bad Process + Loss Classification",
+      "passed": true,
+      "elapsed_ms": 0.0,
+      "observed": {
+        "quadrant": "BAD_PROCESS_BAD_OUTCOME",
+        "process_score": 15
+      }
+    },
+    {
+      "id": "SAFE-01",
+      "category": "watchdog_safety",
+      "name": "Trade Intent Detector Extracts Chinese Buy Proposal Cleanly",
+      "passed": true,
+      "elapsed_ms": 0.01,
+      "observed": {
+        "detected": true,
+        "symbol": "NVDA",
+        "side": "buy",
+        "proposed_qty": 80.0
+      }
+    },
+    {
+      "id": "SAFE-02",
+      "category": "watchdog_safety",
+      "name": "Research Query Does Not False-Trigger Trade Intent Execution",
+      "passed": true,
+      "elapsed_ms": 0.01,
+      "observed": {
+        "detected": false
+      }
+    },
+    {
+      "id": "SAFE-03",
+      "category": "watchdog_safety",
+      "name": "Canonical Tool Fingerprint Prevents Identical Argument Loops",
+      "passed": true,
+      "elapsed_ms": 0.04,
+      "observed": {
+        "hash_a": "73aa673f696391d6",
+        "hash_b": "73aa673f696391d6"
+      }
+    },
+    {
+      "id": "SAFE-04",
+      "category": "watchdog_safety",
+      "name": "RRF Hybrid Fusion Boosts Dual Lexical+Vector Match Above Single Hit",
+      "passed": true,
+      "elapsed_ms": 0.04,
+      "observed": {
+        "top_chunk_id": 10,
+        "rrf": 0.032787
+      }
+    }
+  ]
+}

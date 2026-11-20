@@ -134,8 +134,10 @@ export interface CalendarEventItem {
   symbol: string | null;
   title: string;
   impact: string;
+  actual?: number | null;
   estimate: number | null;
   previous: number | null;
+  eps_actual?: number | null;
   eps_estimate: number | null;
 }
 
@@ -233,6 +235,38 @@ export interface AssetNewsItem {
   created_at: string;
 }
 
+export interface EpsHistoryPoint {
+  period: string;
+  estimate: number | null;
+  actual: number | null;
+  surprise_percent: number | null;
+  source: string;
+}
+
+export interface AnalystRecommendationPoint {
+  symbol: string;
+  period: string;
+  strong_buy: number;
+  buy: number;
+  hold: number;
+  sell: number;
+  strong_sell: number;
+}
+
+export interface RegimeHistoryPoint {
+  regime_date: string;
+  regime_label: string;
+  fear_greed_score: number | null;
+  fear_greed_label: string | null;
+  vix_spot: number | null;
+  vix_3m: number | null;
+  vix_term_ratio: number | null;
+  rsp_spy_ratio: number | null;
+  pct_above_50ma: number | null;
+  hy_oas: number | null;
+  net_liquidity_bn: number | null;
+}
+
 export interface AssetDetailResponse {
   symbol: string;
   asset_class: string;
@@ -241,6 +275,8 @@ export interface AssetDetailResponse {
   technicals: AssetTechnicals;
   options_gex: EstimatedGexSnapshot | null;
   news: AssetNewsItem[];
+  eps_history?: EpsHistoryPoint[];
+  recommendations?: AnalystRecommendationPoint[];
 }
 
 export interface TrackedAssetSummary {
@@ -293,19 +329,57 @@ export async function fetchTrackedAssets(): Promise<{
 
 export async function fetchAssetDetail(
   symbol: string,
-  barsLimit = 220,
-  includeNews = true
+  barsLimit = 260,
+  includeNews = true,
+  ensureIfMissing = true
 ): Promise<AssetDetailResponse> {
   const params = new URLSearchParams({
     bars_limit: String(barsLimit),
     include_news: String(includeNews),
+    ensure_if_missing: String(ensureIfMissing),
   });
   const res = await fetch(
     `${API_BASE}/api/assets/${encodeURIComponent(symbol)}?${params.toString()}`,
     { cache: "no-store" }
   );
   if (!res.ok) {
-    throw new Error(`Asset ${symbol} failed (${res.status})`);
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail || `Asset ${symbol} failed (${res.status})`);
+  }
+  return res.json();
+}
+
+export async function ensureAsset(
+  symbol: string,
+  forceRefresh = false
+): Promise<{
+  status: string;
+  symbol: string;
+  found: boolean;
+  bars_count: number;
+  bars_status: string;
+  gex_status: string;
+  eps_status: string;
+}> {
+  const res = await fetch(
+    `${API_BASE}/api/assets/${encodeURIComponent(symbol)}/ensure?force_refresh=${forceRefresh ? "true" : "false"}`,
+    { method: "POST" }
+  );
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail || `Asset ensure failed (${res.status})`);
+  }
+  return res.json();
+}
+
+export async function fetchRegimeHistory(
+  limit = 30
+): Promise<{ count: number; history: RegimeHistoryPoint[] }> {
+  const res = await fetch(`${API_BASE}/api/market/regime-history?limit=${limit}`, {
+    cache: "no-store",
+  });
+  if (!res.ok) {
+    throw new Error(`Regime history failed (${res.status})`);
   }
   return res.json();
 }
@@ -553,7 +627,72 @@ export interface PaperLedgerResponse {
     status: string;
     regime_at_entry: string | null;
     rationale_summary: string;
+    closed_at?: string | null;
+    realized_pnl?: number | null;
+    spy_benchmark_return_pct?: number | null;
     created_at: string;
+  }[];
+}
+
+export interface WatchdogAlertRecord {
+  id: number;
+  alert_key: string;
+  alert_type: string;
+  severity: "high" | "medium" | "info" | string;
+  symbol: string | null;
+  title: string;
+  summary_markdown: string;
+  metrics: Record<string, unknown>;
+  regime_label: string | null;
+  acknowledged: boolean;
+  created_at: string;
+}
+
+export interface TradeReviewRecord {
+  id: number;
+  paper_trade_id: number;
+  symbol: string;
+  side: string;
+  realized_pnl: number | null;
+  horizon: string;
+  quadrant_outcome: string;
+  alpha_vs_spy_pct: number | null;
+  regime_label: string | null;
+  lessons_markdown: string;
+  created_at: string;
+}
+
+export interface EpisodicMemoryRecord {
+  id: number;
+  paper_trade_id: number | null;
+  symbol: string;
+  regime_label: string;
+  quadrant_outcome: string;
+  title: string;
+  lesson_text: string;
+  tags: string[];
+  alpha_vs_spy_pct: number | null;
+  created_at: string;
+}
+
+export interface GoldenEvalReport {
+  status: string;
+  generated_at: string;
+  total_cases: number;
+  passed_cases: number;
+  pass_rate_pct: number;
+  duration_ms: number;
+  categories: Record<
+    string,
+    { total: number; passed: number; pass_rate_pct: number }
+  >;
+  results: {
+    id: string;
+    category: string;
+    name: string;
+    passed: boolean;
+    elapsed_ms: number;
+    observed: Record<string, unknown>;
   }[];
 }
 
@@ -679,4 +818,162 @@ export async function streamInvestigate(
       }
     }
   }
+}
+
+export async function cancelPaperOrder(
+  orderId: string,
+  adminToken?: string | null
+): Promise<{ status: string; updated_trades: number }> {
+  const headers: Record<string, string> = {};
+  if (adminToken && adminToken.trim()) {
+    headers["X-Admin-Token"] = adminToken.trim();
+  }
+  const res = await fetch(
+    `${API_BASE}/api/trade/orders/${encodeURIComponent(orderId)}/cancel`,
+    { method: "POST", headers }
+  );
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail || `Order cancel failed (${res.status})`);
+  }
+  return res.json();
+}
+
+export async function closePaperPosition(
+  symbol: string,
+  adminToken?: string | null
+): Promise<{ status: string; symbol: string; closed_trade_ids: number[] }> {
+  const headers: Record<string, string> = {};
+  if (adminToken && adminToken.trim()) {
+    headers["X-Admin-Token"] = adminToken.trim();
+  }
+  const res = await fetch(
+    `${API_BASE}/api/trade/positions/${encodeURIComponent(symbol)}/close`,
+    { method: "POST", headers }
+  );
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail || `Close position failed (${res.status})`);
+  }
+  return res.json();
+}
+
+export async function syncPaperTradesStatus(): Promise<{
+  status: string;
+  checked: number;
+  updated: number;
+  newly_closed_trade_ids: number[];
+}> {
+  const res = await fetch(`${API_BASE}/api/trade/sync-status`, { method: "POST" });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail || `Trade status sync failed (${res.status})`);
+  }
+  return res.json();
+}
+
+export async function fetchWatchdogAlerts(limit = 20): Promise<{
+  count: number;
+  alerts: WatchdogAlertRecord[];
+}> {
+  const res = await fetch(`${API_BASE}/api/watchdog/alerts?limit=${limit}`, {
+    cache: "no-store",
+  });
+  if (!res.ok) {
+    throw new Error(`Watchdog alerts fetch failed (${res.status})`);
+  }
+  return res.json();
+}
+
+export async function triggerWatchdogScan(useFastLlm = true): Promise<{
+  status: string;
+  scanned_symbols: number;
+  alerts_upserted: number;
+  regime_label: string;
+  scanned_at: string;
+}> {
+  const res = await fetch(
+    `${API_BASE}/api/watchdog/scan?use_fast_llm=${useFastLlm ? "true" : "false"}`,
+    { method: "POST" }
+  );
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail || `Watchdog scan failed (${res.status})`);
+  }
+  return res.json();
+}
+
+export async function ackWatchdogAlert(alertId: number): Promise<{ status: string }> {
+  const res = await fetch(`${API_BASE}/api/watchdog/alerts/${alertId}/ack`, {
+    method: "POST",
+  });
+  if (!res.ok) {
+    throw new Error(`Ack alert failed (${res.status})`);
+  }
+  return res.json();
+}
+
+export async function fetchTradeReviews(limit = 20): Promise<{
+  reviews: TradeReviewRecord[];
+  memories: EpisodicMemoryRecord[];
+}> {
+  const res = await fetch(`${API_BASE}/api/reviews?limit=${limit}`, { cache: "no-store" });
+  if (!res.ok) {
+    throw new Error(`Trade reviews fetch failed (${res.status})`);
+  }
+  return res.json();
+}
+
+export async function reflectOnTrade(
+  tradeId: number,
+  horizon: "POST_CLOSE" | "T+5" | "T+20" = "POST_CLOSE"
+): Promise<{
+  status: string;
+  review_id: number;
+  quadrant_outcome: string;
+  quadrant_cn: string;
+  alpha_vs_spy_pct: number | null;
+  lessons_markdown: string;
+}> {
+  const res = await fetch(`${API_BASE}/api/reviews/${tradeId}/reflect`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ horizon, use_fast_llm: true }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail || `Reflection failed (${res.status})`);
+  }
+  return res.json();
+}
+
+export async function recallEpisodicMemories(
+  query: string,
+  symbol?: string | null
+): Promise<{ count: number; memories: EpisodicMemoryRecord[] }> {
+  const params = new URLSearchParams({ query, top_k: "6" });
+  if (symbol) params.set("symbol", symbol);
+  const res = await fetch(`${API_BASE}/api/memories/recall?${params.toString()}`, {
+    cache: "no-store",
+  });
+  if (!res.ok) {
+    throw new Error(`Memory recall failed (${res.status})`);
+  }
+  return res.json();
+}
+
+export async function fetchLatestEvalReport(): Promise<GoldenEvalReport> {
+  const res = await fetch(`${API_BASE}/api/evals/latest`, { cache: "no-store" });
+  if (!res.ok) {
+    throw new Error(`Eval report fetch failed (${res.status})`);
+  }
+  return res.json();
+}
+
+export async function runGoldenEvals(): Promise<GoldenEvalReport> {
+  const res = await fetch(`${API_BASE}/api/evals/run`, { method: "POST" });
+  if (!res.ok) {
+    throw new Error(`Eval run failed (${res.status})`);
+  }
+  return res.json();
 }

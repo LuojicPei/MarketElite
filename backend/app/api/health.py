@@ -30,7 +30,7 @@ async def health_check(request: Request) -> dict[str, Any]:
     return {
         "service": settings.app_name,
         "env": settings.app_env,
-        "phase": "Phase 4 · Risk Critic, Checkpoint & Alpaca Paper",
+        "phase": "Phase 5 · Watchdog, Episodic Memory & Golden Evals",
         "checkpoint_ready": bool(getattr(request.app.state, "pg_checkpoint_ready", False)),
         "status": "ok" if all_ready else ("degraded" if core_ready else "initializing"),
         "checked_at": datetime.now(timezone.utc).isoformat(),

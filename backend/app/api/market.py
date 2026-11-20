@@ -7,10 +7,21 @@ from fastapi import APIRouter, Header, HTTPException, Query, Request
 from sqlalchemy import desc, func, select
 
 from app.core.config import get_settings
-from app.db.models import MarketDailyBar, MarketRegimeDaily, OptionsGexSnapshot
+from app.db.models import (
+    ConsensusEpsSnapshot,
+    MarketDailyBar,
+    MarketRegimeDaily,
+    OptionsGexSnapshot,
+)
 from app.quant.technicals import DailyBarInput, analyze_asset_technicals
-from app.services.pipeline import OVERVIEW_CACHE_KEY, run_full_pipeline_sync
+from app.services.pipeline import (
+    OVERVIEW_CACHE_KEY,
+    ensure_asset_persisted,
+    get_regime_history,
+    run_full_pipeline_sync,
+)
 from app.services.providers.alpaca import AlpacaClient
+from app.services.providers.macro_feeds import MacroFeedsClient
 from app.services.resilience import DualTTLCache, ProviderError
 
 router = APIRouter(prefix="/api", tags=["market"])
@@ -111,42 +122,121 @@ async def get_dashboard_overview(request: Request) -> dict[str, Any]:
     }
 
 
+@router.post("/assets/{symbol}/ensure")
+async def ensure_asset_endpoint(
+    symbol: str,
+    request: Request,
+    force_refresh: bool = Query(default=False),
+) -> dict[str, Any]:
+    """On-demand lazy ingestion for ANY US ticker (bars, Estimated GEX & Finnhub EPS history)."""
+    sym = symbol.upper().strip()
+    if not sym:
+        raise HTTPException(status_code=400, detail="Symbol is required")
+    settings = get_settings()
+    infra = request.app.state.infra
+    session_factory = request.app.state.session_factory
+    try:
+        res = await ensure_asset_persisted(
+            session_factory,
+            infra.redis,
+            settings,
+            sym,
+            include_gex=True,
+            include_eps=True,
+            force_refresh=force_refresh,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if not res.get("found"):
+        raise HTTPException(
+            status_code=404,
+            detail=f"No daily market bars found for ticker '{sym}'. Verify it is a listed US equity/ETF.",
+        )
+    return {"status": "ok", **res}
+
+
+@router.get("/market/regime-history")
+async def get_market_regime_history(
+    request: Request,
+    limit: int = Query(default=30, ge=1, le=90),
+) -> dict[str, Any]:
+    """Return chronological 30-day Market Regime & Fear/Greed history."""
+    rows = await get_regime_history(request.app.state.session_factory, limit=limit)
+    return {"count": len(rows), "history": rows}
+
+
 @router.get("/assets/{symbol}")
 async def get_asset_detail(
     symbol: str,
     request: Request,
     bars_limit: int = Query(default=180, ge=20, le=365),
     include_news: bool = Query(default=False),
+    ensure_if_missing: bool = Query(default=True),
 ) -> dict[str, Any]:
-    """Return historical daily bars, technical state, and latest Estimated GEX for a ticker."""
+    """Return historical daily bars, technical state, Estimated GEX & EPS consensus for ANY US ticker."""
     sym = symbol.upper().strip()
     if not sym:
         raise HTTPException(status_code=400, detail="Symbol is required")
 
+    settings = get_settings()
+    infra = request.app.state.infra
     session_factory = request.app.state.session_factory
     query_limit = max(bars_limit, 260)
-    async with session_factory() as session:
-        bar_stmt = (
-            select(MarketDailyBar)
-            .where(MarketDailyBar.symbol == sym)
-            .order_by(desc(MarketDailyBar.trade_date))
-            .limit(query_limit)
-        )
-        db_bars = list((await session.execute(bar_stmt)).scalars().all())
-        db_bars.reverse()
 
-        gex_stmt = (
-            select(OptionsGexSnapshot)
-            .where(OptionsGexSnapshot.symbol == sym)
-            .order_by(desc(OptionsGexSnapshot.snapshot_time))
-            .limit(1)
-        )
-        gex_row = (await session.execute(gex_stmt)).scalar_one_or_none()
+    async def _load_from_db() -> tuple[list[MarketDailyBar], OptionsGexSnapshot | None, list[ConsensusEpsSnapshot]]:
+        async with session_factory() as session:
+            bar_stmt = (
+                select(MarketDailyBar)
+                .where(MarketDailyBar.symbol == sym)
+                .order_by(desc(MarketDailyBar.trade_date))
+                .limit(query_limit)
+            )
+            bars = list((await session.execute(bar_stmt)).scalars().all())
+            bars.reverse()
+
+            gex_stmt = (
+                select(OptionsGexSnapshot)
+                .where(OptionsGexSnapshot.symbol == sym)
+                .order_by(desc(OptionsGexSnapshot.snapshot_time))
+                .limit(1)
+            )
+            gex = (await session.execute(gex_stmt)).scalar_one_or_none()
+
+            eps_stmt = (
+                select(ConsensusEpsSnapshot)
+                .where(ConsensusEpsSnapshot.symbol == sym)
+                .order_by(desc(ConsensusEpsSnapshot.period))
+                .limit(6)
+            )
+            eps = list((await session.execute(eps_stmt)).scalars().all())
+        return bars, gex, eps
+
+    db_bars, gex_row, eps_rows = await _load_from_db()
+    is_crypto_or_etf = sym in {"BTCUSDT", "SPY", "QQQ", "IWM", "RSP", "TLT", "HYG", "IEF", "XLK", "XLF", "XLE", "XLV", "XLY", "XLI", "XLP", "XLU", "XLB", "XLRE", "XLC"}
+
+    if ensure_if_missing and (
+        not db_bars
+        or (sym != "BTCUSDT" and gex_row is None)
+        or (not is_crypto_or_etf and not eps_rows)
+    ):
+        try:
+            await ensure_asset_persisted(
+                session_factory,
+                infra.redis,
+                settings,
+                sym,
+                include_gex=(sym != "BTCUSDT"),
+                include_eps=(not is_crypto_or_etf),
+                force_refresh=False,
+            )
+            db_bars, gex_row, eps_rows = await _load_from_db()
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     if not db_bars:
         raise HTTPException(
             status_code=404,
-            detail=f"No persisted daily bars found for {sym}. Run pipeline sync first.",
+            detail=f"No persisted daily bars found for {sym}. Try verifying the US ticker symbol.",
         )
 
     bar_inputs = [
@@ -181,12 +271,37 @@ async def get_asset_detail(
         }
 
     news_items: list[dict[str, Any]] = []
-    if include_news:
+    if include_news and sym != "BTCUSDT":
         try:
-            alpaca = AlpacaClient(get_settings())
+            alpaca = AlpacaClient(settings, cache=DualTTLCache(infra.redis))
             news_items = await alpaca.get_news([sym], limit=8)
         except ProviderError:
             news_items = []
+
+    recommendations: list[dict[str, Any]] = []
+    if not is_crypto_or_etf:
+        try:
+            feeds = MacroFeedsClient(settings, cache=DualTTLCache(infra.redis))
+            recommendations = await feeds.get_finnhub_recommendation_trends(sym)
+        except ProviderError:
+            recommendations = []
+
+    # Deduplicate EPS periods cleanly if multiple snapshot dates stored
+    seen_periods: set[str] = set()
+    eps_history: list[dict[str, Any]] = []
+    for row in eps_rows:
+        if row.period in seen_periods:
+            continue
+        seen_periods.add(row.period)
+        eps_history.append(
+            {
+                "period": row.period,
+                "estimate": row.eps_avg,
+                "actual": row.eps_high,
+                "surprise_percent": row.eps_low,
+                "source": row.source,
+            }
+        )
 
     return {
         "symbol": sym,
@@ -207,6 +322,8 @@ async def get_asset_detail(
         "technicals": technicals,
         "options_gex": gex_payload,
         "news": news_items,
+        "eps_history": eps_history,
+        "recommendations": recommendations,
     }
 
 

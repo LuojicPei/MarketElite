@@ -23,9 +23,12 @@ import {
 import {
   ArchitectureStage,
   ComponentHealth,
+  GoldenEvalReport,
   fetchArchitecture,
   fetchHealth,
+  fetchLatestEvalReport,
   HealthResponse,
+  runGoldenEvals,
 } from "@/lib/api";
 
 const EASE_EXPO = [0.16, 1, 0.3, 1] as const;
@@ -268,12 +271,16 @@ function InfraBlock({
 }
 
 export default function StatusConsole() {
-  const [activeTab, setActiveTab] = useState<"telemetry" | "choreography">("telemetry");
+  const [activeTab, setActiveTab] = useState<"telemetry" | "evals" | "choreography">("telemetry");
   const [health, setHealth] = useState<HealthResponse | null>(null);
   const [stages, setStages] = useState<ArchitectureStage[]>(FALLBACK_STAGES);
   const [loading, setLoading] = useState<boolean>(true);
   const [apiError, setApiError] = useState<string | null>(null);
   const [roundTripMs, setRoundTripMs] = useState<number | null>(null);
+
+  const [evalReport, setEvalReport] = useState<GoldenEvalReport | null>(null);
+  const [runningEvals, setRunningEvals] = useState<boolean>(false);
+  const [evalCategoryFilter, setEvalCategoryFilter] = useState<string>("all");
 
   const [selectedStageId, setSelectedStageId] = useState<string>("base");
   const [autoPlay, setAutoPlay] = useState<boolean>(false);
@@ -283,10 +290,17 @@ export default function StatusConsole() {
     setApiError(null);
     const t0 = performance.now();
     try {
-      const [h, arch] = await Promise.all([fetchHealth(), fetchArchitecture()]);
+      const [h, arch, ev] = await Promise.all([
+        fetchHealth(),
+        fetchArchitecture(),
+        fetchLatestEvalReport().catch(() => null),
+      ]);
       setHealth(h);
       if (arch?.stages?.length) {
         setStages(arch.stages);
+      }
+      if (ev) {
+        setEvalReport(ev);
       }
       setRoundTripMs(Math.round(performance.now() - t0));
     } catch (err) {
@@ -297,6 +311,18 @@ export default function StatusConsole() {
       setLoading(false);
     }
   }, []);
+
+  const handleRunGoldenEvals = async () => {
+    setRunningEvals(true);
+    try {
+      const rep = await runGoldenEvals();
+      setEvalReport(rep);
+    } catch (err) {
+      setApiError(err instanceof Error ? err.message : "Golden eval run failed");
+    } finally {
+      setRunningEvals(false);
+    }
+  };
 
   useEffect(() => {
     probeSystem();
@@ -361,7 +387,8 @@ export default function StatusConsole() {
             {(
               [
                 { id: "telemetry", label: "系统健康探针", icon: Cpu },
-                { id: "choreography", label: "Agent 闭环流转预览", icon: GitBranch },
+                { id: "evals", label: "Phase 5 黄金评测", icon: CheckCircle2 },
+                { id: "choreography", label: "Agent 闭环预览", icon: GitBranch },
               ] as const
             ).map((tab) => {
               const Icon = tab.icon;
@@ -658,6 +685,131 @@ export default function StatusConsole() {
                   ))}
                 </div>
               </div>
+            </motion.div>
+          ) : activeTab === "evals" ? (
+            <motion.div
+              key="evals"
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -8 }}
+              transition={{ duration: 0.28, ease: EASE_EXPO }}
+              className="space-y-5"
+            >
+              <div
+                onMouseMove={handleSpotlightMove}
+                className="velvet-black-block flex flex-col justify-between gap-4 rounded-2xl p-6 text-white sm:flex-row sm:items-center"
+              >
+                <div>
+                  <div className="font-mono text-[10px] uppercase tracking-widest text-zinc-400">
+                    PHASE 5 GOLDEN BENCHMARK · 32 DETERMINISTIC &amp; POLICY CASES
+                  </div>
+                  <h1 className="mt-1 font-serif text-3xl tracking-tight text-white">
+                    量化算子、风控护栏与归因记忆回归评测矩阵
+                  </h1>
+                  <p className="mt-1 text-xs text-zinc-400">
+                    离线零 Token 秒级验证宏观体制、GEX 做市商算法、1% 预算钳位、Bracket 止损防错与 RRF 混合检索。
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-3">
+                  {evalReport && (
+                    <div className="rounded-xl bg-white px-4 py-2 text-right text-zinc-950">
+                      <div className="font-mono text-[10px] text-zinc-500">通过率 PASS RATE</div>
+                      <div className="font-mono text-xl font-bold tabular-nums">
+                        {evalReport.passed_cases}/{evalReport.total_cases} ({evalReport.pass_rate_pct}%)
+                      </div>
+                    </div>
+                  )}
+                  <button
+                    type="button"
+                    disabled={runningEvals}
+                    onClick={handleRunGoldenEvals}
+                    className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-emerald-400 px-4 py-2 font-mono text-xs font-semibold text-zinc-950 transition hover:bg-emerald-300 disabled:opacity-50"
+                  >
+                    <Zap className="h-3.5 w-3.5" />
+                    {runningEvals ? "评测运行中..." : "立即运行 Golden Evals"}
+                  </button>
+                </div>
+              </div>
+
+              {evalReport ? (
+                <>
+                  <div className="grid grid-cols-2 gap-3.5 md:grid-cols-4">
+                    {Object.entries(evalReport.categories).map(([cat, st]) => (
+                      <button
+                        key={cat}
+                        type="button"
+                        onClick={() =>
+                          setEvalCategoryFilter((prev) => (prev === cat ? "all" : cat))
+                        }
+                        className={`rounded-2xl border p-4 text-left transition ${
+                          evalCategoryFilter === cat
+                            ? "border-zinc-950 bg-zinc-950 text-white"
+                            : "border-zinc-200 bg-white text-zinc-900 hover:border-zinc-400"
+                        }`}
+                      >
+                        <div className="font-mono text-[10px] uppercase tracking-wider opacity-70">
+                          {cat.replace("_", " / ")}
+                        </div>
+                        <div className="mt-1 flex items-baseline justify-between font-mono">
+                          <span className="text-2xl font-bold tabular-nums">
+                            {st.passed}/{st.total}
+                          </span>
+                          <span className="text-xs font-semibold text-emerald-500">
+                            {st.pass_rate_pct}%
+                          </span>
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+
+                  <div className="rounded-2xl border border-zinc-200 bg-white p-5">
+                    <div className="mb-3 flex flex-wrap items-center justify-between gap-2 border-b border-zinc-100 pb-2 font-mono text-xs">
+                      <span className="font-semibold text-zinc-900">
+                        测试用例明细 ({evalCategoryFilter === "all" ? "全部 32 项" : evalCategoryFilter})
+                      </span>
+                      <span className="text-zinc-500">
+                        耗时 {evalReport.duration_ms} ms · 更新于 {evalReport.generated_at}
+                      </span>
+                    </div>
+                    <div className="max-h-[420px] space-y-1.5 overflow-y-auto pr-1">
+                      {evalReport.results
+                        .filter(
+                          (r) => evalCategoryFilter === "all" || r.category === evalCategoryFilter
+                        )
+                        .map((r) => (
+                          <div
+                            key={r.id}
+                            className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-zinc-100 bg-[#FAF9F6] px-3 py-2 text-xs"
+                          >
+                            <div className="flex items-center gap-2.5">
+                              <span
+                                className={`rounded px-1.5 py-0.5 font-mono text-[10px] font-bold ${
+                                  r.passed
+                                    ? "bg-emerald-100 text-emerald-800"
+                                    : "bg-rose-100 text-rose-800"
+                                }`}
+                              >
+                                {r.passed ? "PASS" : "FAIL"}
+                              </span>
+                              <span className="font-mono text-[11px] font-semibold text-zinc-700">
+                                {r.id}
+                              </span>
+                              <span className="text-zinc-900">{r.name}</span>
+                            </div>
+                            <span className="font-mono text-[10px] text-zinc-500">
+                              {r.elapsed_ms}ms · {JSON.stringify(r.observed)}
+                            </span>
+                          </div>
+                        ))}
+                    </div>
+                  </div>
+                </>
+              ) : (
+                <div className="rounded-2xl border border-dashed border-zinc-300 bg-white p-8 text-center font-mono text-xs text-zinc-500">
+                  点击右上角「立即运行 Golden Evals」获取 32 项自动化验证得分。
+                </div>
+              )}
             </motion.div>
           ) : (
             <motion.div
