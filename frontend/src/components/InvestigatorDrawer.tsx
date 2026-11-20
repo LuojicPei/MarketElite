@@ -16,10 +16,12 @@ import {
 import {
   AgentStatusResponse,
   SecSearchResponse,
+  TradeIntentInfo,
   fetchAgentStatus,
   searchSecFilings,
   streamInvestigate,
 } from "@/lib/api";
+import RiskCriticPanel from "@/components/RiskCriticPanel";
 
 const EASE_EXPO = [0.16, 1, 0.3, 1] as const;
 
@@ -41,7 +43,7 @@ export default function InvestigatorDrawer({
   onClose,
   defaultSymbol,
 }: InvestigatorDrawerProps) {
-  const [tab, setTab] = useState<"agent" | "sec">("agent");
+  const [tab, setTab] = useState<"agent" | "sec" | "risk">("agent");
   const [agentStatus, setAgentStatus] = useState<AgentStatusResponse | null>(null);
   const [symbolInput, setSymbolInput] = useState<string>(defaultSymbol);
   const [queryInput, setQueryInput] = useState<string>(
@@ -56,6 +58,13 @@ export default function InvestigatorDrawer({
   const [toolTraces, setToolTraces] = useState<ToolTraceItem[]>([]);
   const [answer, setAnswer] = useState<string>("");
   const [agentError, setAgentError] = useState<string | null>(null);
+  const [tradeIntent, setTradeIntent] = useState<TradeIntentInfo | null>(null);
+  const [riskPrefill, setRiskPrefill] = useState<{
+    symbol: string;
+    side: "buy" | "sell";
+    qty: number;
+    rationale: string;
+  }>({ symbol: defaultSymbol, side: "buy", qty: 200, rationale: "" });
 
   // 0-Token SEC Hybrid RAG state
   const [secQuery, setSecQuery] = useState<string>(
@@ -137,6 +146,10 @@ export default function InvestigatorDrawer({
             completedAnswer = String(ev.data.answer ?? streamedText);
             setAnswer(completedAnswer);
             setNodeStatus(`Completed (${String(ev.data.steps_taken ?? 0)} steps)`);
+            const rawIntent = ev.data.trade_intent as TradeIntentInfo | undefined;
+            if (rawIntent && typeof rawIntent.detected === "boolean") {
+              setTradeIntent(rawIntent);
+            }
           } else if (ev.event === "error") {
             setAgentError(String(ev.data.detail ?? "Agent error"));
           }
@@ -201,11 +214,11 @@ export default function InvestigatorDrawer({
                 </span>
                 <div>
                   <h2 className="font-serif text-xl tracking-tight text-white">
-                    Investigator 投研主脑 &amp; SEC 财报混合检索
+                    Investigator 投研主脑 · SEC 财报 · Risk Critic 风控
                   </h2>
                   <p className="font-mono text-[10px] text-zinc-400">
                     FastMCP 只读工具 ({agentStatus?.mcp_tools.length ?? 4} tools) · pgvector +
-                    tsvector RRF 混合检索 · 防死循环保护
+                    tsvector RRF · AsyncPostgresSaver HITL
                   </p>
                 </div>
               </div>
@@ -227,7 +240,7 @@ export default function InvestigatorDrawer({
                   <button
                     type="button"
                     onClick={() => setTab("agent")}
-                    className={`rounded-full px-3 py-1 transition ${
+                    className={`whitespace-nowrap rounded-full px-3 py-1 transition ${
                       tab === "agent" ? "bg-white text-zinc-950" : "text-zinc-400 hover:text-white"
                     }`}
                   >
@@ -236,11 +249,20 @@ export default function InvestigatorDrawer({
                   <button
                     type="button"
                     onClick={() => setTab("sec")}
-                    className={`rounded-full px-3 py-1 transition ${
+                    className={`whitespace-nowrap rounded-full px-3 py-1 transition ${
                       tab === "sec" ? "bg-white text-zinc-950" : "text-zinc-400 hover:text-white"
                     }`}
                   >
                     SEC 财报直查 (0-Token)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setTab("risk")}
+                    className={`whitespace-nowrap rounded-full px-3 py-1 transition ${
+                      tab === "risk" ? "bg-white text-zinc-950" : "text-zinc-400 hover:text-white"
+                    }`}
+                  >
+                    Risk Critic 风控 &amp; HITL
                   </button>
                 </div>
 
@@ -376,9 +398,32 @@ export default function InvestigatorDrawer({
 
                   {answer && (
                     <div className="rounded-2xl border border-zinc-200 bg-white p-5 text-zinc-950">
-                      <div className="mb-2 flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-wider text-zinc-500">
-                        <ShieldCheck className="h-3.5 w-3.5 text-emerald-600" />
-                        Investigator Synthesis (Read-Only Grounded)
+                      <div className="mb-2 flex flex-wrap items-center justify-between gap-2 font-mono text-[10px] uppercase tracking-wider text-zinc-500">
+                        <span className="flex items-center gap-1.5">
+                          <ShieldCheck className="h-3.5 w-3.5 text-emerald-600" />
+                          Investigator Synthesis (Read-Only Grounded)
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setRiskPrefill({
+                              symbol: (tradeIntent?.symbol || symbolInput || defaultSymbol).toUpperCase(),
+                              side: tradeIntent?.side || "buy",
+                              qty: tradeIntent?.proposed_qty || 200,
+                              rationale: answer.slice(0, 260),
+                            });
+                            setTab("risk");
+                          }}
+                          className={`inline-flex items-center gap-1 rounded-full px-3 py-1 font-mono text-[10px] font-semibold transition ${
+                            tradeIntent?.detected
+                              ? "bg-zinc-950 text-white hover:bg-zinc-800"
+                              : "border border-zinc-300 bg-zinc-100 text-zinc-900 hover:bg-zinc-200"
+                          }`}
+                        >
+                          {tradeIntent?.detected
+                            ? `检测到交易意图 (${tradeIntent.side?.toUpperCase()} ${tradeIntent.proposed_qty}) → 唤醒 Risk Critic`
+                            : "提交交易提案 → Risk Critic 风控"}
+                        </button>
                       </div>
                       <div className="whitespace-pre-wrap text-sm leading-relaxed text-zinc-800">
                         {answer}
@@ -386,6 +431,13 @@ export default function InvestigatorDrawer({
                     </div>
                   )}
                 </>
+              ) : tab === "risk" ? (
+                <RiskCriticPanel
+                  defaultSymbol={riskPrefill.symbol || symbolInput || defaultSymbol}
+                  prefillSide={riskPrefill.side}
+                  prefillQty={riskPrefill.qty}
+                  prefillRationale={riskPrefill.rationale}
+                />
               ) : (
                 <>
                   <form onSubmit={handleRunSecSearch} className="space-y-3">

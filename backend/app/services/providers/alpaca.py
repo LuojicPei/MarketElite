@@ -397,3 +397,153 @@ class AlpacaClient:
             return await _execute(self._http_client)
         async with httpx.AsyncClient() as client:
             return await _execute(client)
+
+    async def get_account(self) -> dict[str, Any]:
+        """Fetch Alpaca Paper/Live account balances (equity, buying_power, cash)."""
+        headers = self._headers()
+        url = f"{self.trading_base}/v2/account"
+
+        async def _execute(client: httpx.AsyncClient) -> dict[str, Any]:
+            resp = await client.get(url, headers=headers, timeout=15.0)
+            raise_for_provider_response(resp, "alpaca_trading")
+            data = resp.json()
+            return {
+                "id": str(data.get("id", "")),
+                "status": str(data.get("status", "UNKNOWN")),
+                "currency": str(data.get("currency", "USD")),
+                "equity": float(data.get("equity", 0.0) or 0.0),
+                "cash": float(data.get("cash", 0.0) or 0.0),
+                "buying_power": float(data.get("buying_power", 0.0) or 0.0),
+                "portfolio_value": float(data.get("portfolio_value", 0.0) or 0.0),
+                "paper": self._settings.alpaca_paper,
+            }
+
+        if self._http_client is not None:
+            return await _execute(self._http_client)
+        async with httpx.AsyncClient() as client:
+            return await _execute(client)
+
+    async def get_positions(self) -> list[dict[str, Any]]:
+        """Fetch currently open Alpaca Paper positions."""
+        headers = self._headers()
+        url = f"{self.trading_base}/v2/positions"
+
+        async def _execute(client: httpx.AsyncClient) -> list[dict[str, Any]]:
+            resp = await client.get(url, headers=headers, timeout=15.0)
+            raise_for_provider_response(resp, "alpaca_trading")
+            rows = resp.json()
+            if not isinstance(rows, list):
+                return []
+            return [
+                {
+                    "symbol": str(p.get("symbol", "")),
+                    "qty": float(p.get("qty", 0.0) or 0.0),
+                    "side": str(p.get("side", "")),
+                    "avg_entry_price": float(p.get("avg_entry_price", 0.0) or 0.0),
+                    "current_price": float(p.get("current_price", 0.0) or 0.0),
+                    "market_value": float(p.get("market_value", 0.0) or 0.0),
+                    "unrealized_pl": float(p.get("unrealized_pl", 0.0) or 0.0),
+                    "unrealized_plpc": float(p.get("unrealized_plpc", 0.0) or 0.0),
+                }
+                for p in rows
+            ]
+
+        if self._http_client is not None:
+            return await _execute(self._http_client)
+        async with httpx.AsyncClient() as client:
+            return await _execute(client)
+
+    async def get_orders(self, *, status: str = "all", limit: int = 20) -> list[dict[str, Any]]:
+        """Fetch recent Alpaca Paper orders (including bracket child legs)."""
+        headers = self._headers()
+        url = f"{self.trading_base}/v2/orders"
+
+        async def _execute(client: httpx.AsyncClient) -> list[dict[str, Any]]:
+            resp = await client.get(
+                url,
+                headers=headers,
+                params={"status": status, "limit": limit, "nested": "true"},
+                timeout=15.0,
+            )
+            raise_for_provider_response(resp, "alpaca_trading")
+            rows = resp.json()
+            if not isinstance(rows, list):
+                return []
+            return [
+                {
+                    "id": str(o.get("id", "")),
+                    "client_order_id": o.get("client_order_id"),
+                    "symbol": str(o.get("symbol", "")),
+                    "side": str(o.get("side", "")),
+                    "qty": str(o.get("qty", "")),
+                    "order_class": str(o.get("order_class", "simple")),
+                    "type": str(o.get("type", "")),
+                    "status": str(o.get("status", "")),
+                    "filled_avg_price": o.get("filled_avg_price"),
+                    "created_at": o.get("created_at"),
+                }
+                for o in rows
+            ]
+
+        if self._http_client is not None:
+            return await _execute(self._http_client)
+        async with httpx.AsyncClient() as client:
+            return await _execute(client)
+
+    async def submit_bracket_order(
+        self,
+        *,
+        symbol: str,
+        qty: int,
+        side: str,
+        take_profit_price: float,
+        stop_loss_price: float,
+        limit_price: float | None = None,
+        client_order_id: str | None = None,
+        time_in_force: str = "day",
+    ) -> dict[str, Any]:
+        """Submit deterministic Alpaca OrderClass.BRACKET order (ONLY from HITL execution node)."""
+        if qty < 1:
+            raise ValueError("Bracket orders require integer qty >= 1.")
+        norm_side = side.lower().strip()
+        if norm_side not in ("buy", "sell"):
+            raise ValueError("Side must be 'buy' or 'sell'.")
+
+        headers = self._headers()
+        url = f"{self.trading_base}/v2/orders"
+        payload: dict[str, Any] = {
+            "symbol": symbol.upper().strip(),
+            "qty": str(int(qty)),
+            "side": norm_side,
+            "type": "limit" if limit_price is not None else "market",
+            "time_in_force": time_in_force,
+            "order_class": "bracket",
+            "take_profit": {"limit_price": f"{float(take_profit_price):.2f}"},
+            "stop_loss": {"stop_price": f"{float(stop_loss_price):.2f}"},
+        }
+        if limit_price is not None:
+            payload["limit_price"] = f"{float(limit_price):.2f}"
+        if client_order_id:
+            payload["client_order_id"] = client_order_id[:48]
+
+        async def _execute(client: httpx.AsyncClient) -> dict[str, Any]:
+            resp = await client.post(url, headers=headers, json=payload, timeout=20.0)
+            raise_for_provider_response(resp, "alpaca_trading")
+            data = resp.json()
+            return {
+                "id": str(data.get("id", "")),
+                "client_order_id": data.get("client_order_id"),
+                "symbol": str(data.get("symbol", "")),
+                "side": str(data.get("side", "")),
+                "qty": str(data.get("qty", "")),
+                "order_class": str(data.get("order_class", "bracket")),
+                "type": str(data.get("type", "")),
+                "status": str(data.get("status", "")),
+                "submitted_at": data.get("submitted_at"),
+                "legs": data.get("legs") or [],
+            }
+
+        if self._http_client is not None:
+            return await _execute(self._http_client)
+        async with httpx.AsyncClient() as client:
+            return await _execute(client)

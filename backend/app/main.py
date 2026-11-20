@@ -11,9 +11,11 @@ from fastapi.middleware.cors import CORSMiddleware
 if os.name == "nt":
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
+from app.agents.checkpointer import build_checkpointer
 from app.api.agent import router as agent_router
 from app.api.health import router as health_router
 from app.api.market import router as market_router
+from app.api.trade import router as trade_router
 from app.core.clients import InfraManager
 from app.core.config import get_settings
 from app.core.telemetry import init_phoenix_telemetry
@@ -31,6 +33,7 @@ def create_app() -> FastAPI:
         init_phoenix_telemetry(settings)
         infra = InfraManager(settings)
         await infra.startup()
+        checkpointer, pg_checkpoint_ready = await build_checkpointer(infra.pg_pool)
         db_engine = create_db_engine(settings)
         session_factory = create_session_factory(db_engine)
         configure_mcp_dependencies(
@@ -39,6 +42,8 @@ def create_app() -> FastAPI:
             redis_client=infra.redis,
         )
         app.state.infra = infra
+        app.state.checkpointer = checkpointer
+        app.state.pg_checkpoint_ready = pg_checkpoint_ready
         app.state.db_engine = db_engine
         app.state.session_factory = session_factory
         app.state.mcp = app_mcp
@@ -51,7 +56,7 @@ def create_app() -> FastAPI:
 
     app = FastAPI(
         title=f"{settings.app_name} API",
-        version="0.3.0",
+        version="0.4.0",
         description="Production-grade US Equity Market Structure & Multi-Agent Risk Workstation",
         lifespan=lifespan,
     )
@@ -67,6 +72,7 @@ def create_app() -> FastAPI:
     app.include_router(health_router)
     app.include_router(market_router)
     app.include_router(agent_router)
+    app.include_router(trade_router)
     app.mount("/mcp-server", mcp_http_app)
     return app
 

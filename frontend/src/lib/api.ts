@@ -407,6 +407,226 @@ export interface InvestigateSseEvent {
   data: Record<string, unknown>;
 }
 
+export interface TradeIntentInfo {
+  detected: boolean;
+  symbol?: string;
+  side?: "buy" | "sell";
+  proposed_qty?: number;
+}
+
+export interface RiskSizingPayload {
+  symbol: string;
+  side: string;
+  account_equity: number;
+  buying_power: number;
+  risk_budget_pct: number;
+  max_risk_dollars: number;
+  entry_price: number;
+  stop_loss_price: number;
+  take_profit_price: number;
+  stop_distance: number;
+  proposed_qty: number;
+  max_safe_qty: number;
+  recommended_qty: number;
+  was_capped_by_risk: boolean;
+  was_capped_by_buying_power: boolean;
+  estimated_notional: number;
+  estimated_risk_dollars: number;
+  risk_reward_ratio: number;
+  bracket_valid: boolean;
+  warnings: string[];
+}
+
+export interface RiskCritiquePayload {
+  verdict: string;
+  summary: string;
+  counter_arguments: string[];
+  regime_alignment: string;
+  falsification_trigger: string;
+  suggested_stop_loss: number | null;
+  suggested_take_profit: number | null;
+}
+
+export interface RiskApprovalCard {
+  type: string;
+  thread_id: string;
+  symbol: string;
+  side: "buy" | "sell";
+  rationale: string;
+  risk_sizing: RiskSizingPayload;
+  critique: RiskCritiquePayload;
+  account?: {
+    status?: string;
+    equity?: number;
+    buying_power?: number;
+    cash?: number;
+    paper?: boolean;
+  };
+  existing_position?: {
+    symbol: string;
+    qty: number;
+    market_value: number;
+    unrealized_pl: number;
+  } | null;
+  upcoming_catalysts?: {
+    event_type: string;
+    event_time: string;
+    symbol: string | null;
+    title: string;
+    impact: string;
+  }[];
+}
+
+export interface TradeProposeResponse {
+  status: string;
+  thread_id: string;
+  trade_id: number | null;
+  requires_admin_token: boolean;
+  checkpointer: "postgres" | "memory" | string;
+  approval_card: RiskApprovalCard;
+}
+
+export interface TradeResumeResponse {
+  status: string;
+  thread_id: string;
+  error: string | null;
+  receipt: Record<string, unknown>;
+}
+
+export interface TradeCheckpointResponse {
+  thread_id: string;
+  next_nodes: string[];
+  is_suspended: boolean;
+  requires_admin_token: boolean;
+  approval_card: RiskApprovalCard;
+  execution_status: string | null;
+  execution_receipt: Record<string, unknown> | null;
+}
+
+export interface PaperLedgerResponse {
+  checkpointer: string;
+  requires_admin_token: boolean;
+  alpaca_error: string | null;
+  account: {
+    id: string;
+    status: string;
+    currency: string;
+    equity: number;
+    cash: number;
+    buying_power: number;
+    portfolio_value: number;
+    paper: boolean;
+  } | null;
+  positions: {
+    symbol: string;
+    qty: number;
+    side: string;
+    avg_entry_price: number;
+    current_price: number;
+    market_value: number;
+    unrealized_pl: number;
+    unrealized_plpc: number;
+  }[];
+  orders: {
+    id: string;
+    symbol: string;
+    side: string;
+    qty: string;
+    order_class: string;
+    type: string;
+    status: string;
+    filled_avg_price: string | null;
+    created_at: string | null;
+  }[];
+  paper_trades: {
+    id: number;
+    thread_id: string | null;
+    symbol: string;
+    side: string;
+    order_class: string;
+    qty: number;
+    entry_price: number | null;
+    stop_loss_price: number | null;
+    take_profit_price: number | null;
+    risk_budget_pct: number;
+    alpaca_order_id: string | null;
+    status: string;
+    regime_at_entry: string | null;
+    rationale_summary: string;
+    created_at: string;
+  }[];
+}
+
+export async function proposeTrade(payload: {
+  thread_id?: string | null;
+  symbol: string;
+  side: "buy" | "sell";
+  proposed_qty: number;
+  entry_price?: number | null;
+  stop_loss_price?: number | null;
+  take_profit_price?: number | null;
+  risk_budget_pct?: number;
+  rationale?: string;
+}): Promise<TradeProposeResponse> {
+  const res = await fetch(`${API_BASE}/api/trade/propose`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail || `Trade proposal failed (${res.status})`);
+  }
+  return res.json();
+}
+
+export async function resumeTrade(
+  payload: {
+    thread_id: string;
+    decision: "approve" | "reject";
+    approved_qty?: number | null;
+    stop_loss_price?: number | null;
+    take_profit_price?: number | null;
+    limit_price?: number | null;
+    note?: string;
+  },
+  adminToken?: string
+): Promise<TradeResumeResponse> {
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (adminToken && adminToken.trim()) {
+    headers["X-Admin-Token"] = adminToken.trim();
+  }
+  const res = await fetch(`${API_BASE}/api/trade/resume`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail || `HITL resume failed (${res.status})`);
+  }
+  return res.json();
+}
+
+export async function fetchTradeCheckpoint(threadId: string): Promise<TradeCheckpointResponse> {
+  const res = await fetch(`${API_BASE}/api/trade/checkpoint/${encodeURIComponent(threadId)}`, {
+    cache: "no-store",
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail || `Checkpoint load failed (${res.status})`);
+  }
+  return res.json();
+}
+
+export async function fetchTradeLedger(): Promise<PaperLedgerResponse> {
+  const res = await fetch(`${API_BASE}/api/trade/ledger`, { cache: "no-store" });
+  if (!res.ok) {
+    throw new Error(`Paper ledger fetch failed (${res.status})`);
+  }
+  return res.json();
+}
+
 export async function streamInvestigate(
   payload: {
     thread_id: string;

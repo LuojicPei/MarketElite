@@ -8,6 +8,7 @@ from typing import Any
 import httpx
 import psycopg
 import redis.asyncio as aioredis
+from psycopg.rows import dict_row
 from psycopg_pool import AsyncConnectionPool
 
 from app.core.config import Settings
@@ -27,12 +28,17 @@ class InfraManager:
         """Initialize connection pools lazily without blocking boot when containers are down."""
         try:
             self.pg_pool = AsyncConnectionPool(
-                conninfo=self.settings.libpq_dsn,
+                conninfo=self.settings.checkpoint_db_uri or self.settings.libpq_dsn,
                 min_size=0,
                 max_size=10,
                 open=False,
                 reconnect_timeout=5.0,
-                kwargs={"autocommit": True, "prepare_threshold": 0, "connect_timeout": 2},
+                kwargs={
+                    "autocommit": True,
+                    "prepare_threshold": 0,
+                    "row_factory": dict_row,
+                    "connect_timeout": 2,
+                },
             )
             await asyncio.wait_for(self.pg_pool.open(wait=False), timeout=2.0)
         except (psycopg.Error, OSError, asyncio.TimeoutError, RuntimeError) as exc:
@@ -89,10 +95,15 @@ class InfraManager:
     @staticmethod
     async def _inspect_pg_connection(conn: psycopg.AsyncConnection, started: float) -> dict[str, Any]:
         async with conn.cursor() as cur:
-            await cur.execute("SELECT 1;")
-            await cur.execute("SELECT EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'vector');")
+            await cur.execute("SELECT 1 AS ok;")
+            await cur.execute(
+                "SELECT EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'vector') AS has_vector;"
+            )
             row = await cur.fetchone()
-            has_vector = bool(row and row[0])
+            if isinstance(row, dict):
+                has_vector = bool(row.get("has_vector"))
+            else:
+                has_vector = bool(row and row[0])
         return {
             "status": "up",
             "latency_ms": round((time.perf_counter() - started) * 1000, 2),

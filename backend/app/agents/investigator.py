@@ -4,6 +4,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import re
 import time
 from collections.abc import AsyncIterator, Sequence
 from typing import Annotated, Any, TypedDict
@@ -76,6 +77,31 @@ def compute_tool_fingerprint(tool_name: str, args: dict[str, Any]) -> str:
     """Compute canonical SHA-256 fingerprint of a tool call to block identical loop calls."""
     canonical = json.dumps({"tool": tool_name, "args": args}, sort_keys=True, default=str)
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16]
+
+
+_BUY_INTENT_RE = re.compile(
+    r"(买|买入|做多|建仓|抄底|加仓|buy|long|accumulate|enter)", re.IGNORECASE
+)
+_SELL_INTENT_RE = re.compile(r"(卖|卖出|做空|清仓|止损减仓|sell|short)", re.IGNORECASE)
+_QTY_RE = re.compile(r"(\d+(?:\.\d+)?)\s*(?:股|shares?|sh)\b", re.IGNORECASE)
+
+
+def detect_trade_intent(query: str, symbol: str | None) -> dict[str, Any]:
+    """Detect conditional trade execution intent cleanly so UI routes to isolated Risk Critic."""
+    text = (query or "").strip()
+    is_sell = bool(_SELL_INTENT_RE.search(text))
+    is_buy = bool(_BUY_INTENT_RE.search(text))
+    if not (is_buy or is_sell):
+        return {"detected": False}
+
+    qty_match = _QTY_RE.search(text)
+    proposed_qty = float(qty_match.group(1)) if qty_match else 100.0
+    return {
+        "detected": True,
+        "symbol": (symbol or "SPY").upper().strip(),
+        "side": "sell" if is_sell and not is_buy else "buy",
+        "proposed_qty": max(1.0, proposed_qty),
+    }
 
 
 def _loopback_httpx_factory(
@@ -598,6 +624,7 @@ class InvestigatorAgentRunner:
                 "tools_used": final_state.get("tool_calls_log", []),
                 "sec_parallel_notes": notes_collector,
                 "forced_stop_reason": final_state.get("forced_stop_reason"),
+                "trade_intent": detect_trade_intent(query, symbol),
                 "mcp_server": mcp.name,
             },
         }

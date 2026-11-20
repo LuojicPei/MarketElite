@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Sequence
+from urllib.parse import urlparse
 
 import httpx
 from langchain_core.messages import BaseMessage, SystemMessage
@@ -107,11 +108,12 @@ async def embed_texts(
     """Generate dense embeddings via OpenAI-compatible /embeddings API when key is configured."""
     if not texts:
         return []
-    api_key = (
-        settings.llm_embedding_api_key.strip()
-        or settings.llm_fast_api_key.strip()
-        or settings.llm_pro_api_key.strip()
-    )
+    emb_host = urlparse(settings.llm_embedding_base_url).netloc.lower()
+    api_key = settings.llm_embedding_api_key.strip()
+    if not api_key and emb_host and emb_host == urlparse(settings.llm_fast_base_url).netloc.lower():
+        api_key = settings.llm_fast_api_key.strip()
+    if not api_key and emb_host and emb_host == urlparse(settings.llm_pro_base_url).netloc.lower():
+        api_key = settings.llm_pro_api_key.strip()
     if not api_key:
         return None
 

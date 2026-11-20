@@ -1261,7 +1261,7 @@ export default function MarketCockpit() {
               className="inline-flex items-center gap-1.5 rounded-full bg-white px-3.5 py-1 font-mono text-[10px] font-semibold text-zinc-950 transition hover:bg-zinc-200"
             >
               <Sparkles className="h-3 w-3" />
-              Investigator 投研主脑 · SEC 财报检索
+              Investigator 投研 · SEC · Risk Critic 风控
             </button>
           </div>
         </motion.div>
