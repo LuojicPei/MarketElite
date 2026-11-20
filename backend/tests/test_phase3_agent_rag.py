@@ -215,3 +215,14 @@ def test_agent_status_and_reentry_lock_409(monkeypatch) -> None:
         )
         assert no_key_resp.status_code == 503
         assert "lock:run:thread-free" not in fake_redis._store
+
+        # Production mode hides localhost Phoenix URL from public clients
+        prod_settings = Settings(
+            _env_file=None,
+            app_env="production",
+            phoenix_ui_url="http://localhost:6007",
+        )
+        monkeypatch.setattr("app.api.agent.get_settings", lambda: prod_settings)
+        prod_status = client.get("/api/agent/status")
+        assert prod_status.status_code == 200
+        assert prod_status.json()["phoenix_ui_url"] is None

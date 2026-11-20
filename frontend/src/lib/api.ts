@@ -332,7 +332,7 @@ export interface AgentStatusResponse {
   llm_pro_model: string;
   llm_fast_model: string;
   telemetry_enabled: boolean;
-  phoenix_ui_url: string;
+  phoenix_ui_url: string | null;
   mcp_endpoint: string;
   mcp_tools: { name: string; description: string }[];
   sec_cached_filings: number;

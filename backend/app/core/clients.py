@@ -131,11 +131,16 @@ class InfraManager:
 
     async def probe_phoenix(self) -> dict[str, Any]:
         started = time.perf_counter()
+        is_prod_local_url = self.settings.app_env.lower() == "production" and (
+            "localhost" in self.settings.phoenix_ui_url
+            or "127.0.0.1" in self.settings.phoenix_ui_url
+        )
+        public_ui_url = None if is_prod_local_url else self.settings.phoenix_ui_url
         if not self.settings.enable_telemetry:
             return {
                 "status": "disabled",
                 "latency_ms": 0.0,
-                "ui_url": self.settings.phoenix_ui_url,
+                "ui_url": public_ui_url,
                 "detail": "Telemetry disabled via ENABLE_TELEMETRY=false",
             }
         try:
@@ -145,13 +150,13 @@ class InfraManager:
             return {
                 "status": "up" if is_up else "down",
                 "latency_ms": round((time.perf_counter() - started) * 1000, 2),
-                "ui_url": self.settings.phoenix_ui_url,
+                "ui_url": public_ui_url,
                 "detail": f"HTTP {resp.status_code}",
             }
         except (httpx.HTTPError, OSError) as exc:
             return {
                 "status": "down",
                 "latency_ms": round((time.perf_counter() - started) * 1000, 2),
-                "ui_url": self.settings.phoenix_ui_url,
+                "ui_url": public_ui_url,
                 "detail": str(exc)[:180],
             }

@@ -65,6 +65,7 @@ class Settings(BaseSettings):
     agent_wall_timeout_seconds: int = 45
     agent_max_context_tokens: int = 14000
     guest_chat_rpm: int = 12
+    admin_api_token: str = Field(default="", repr=False)
 
     @property
     def cors_origin_list(self) -> list[str]:

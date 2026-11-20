@@ -112,7 +112,7 @@ def test_bs_gamma_and_estimated_gex_walls_and_zero_gamma() -> None:
         OptionContractInput("SPY_C600", "call", 600.0, 52000, iv=0.14, time_to_expiry_years=30 / 365),
     ]
     gex = compute_estimated_gex("SPY", 580.0, contracts)
-    assert "Estimated GEX" in gex.assumption_label
+    assert "1% Move" in gex.assumption_label
     assert gex.call_wall == 600.0
     assert gex.put_wall == 560.0
     assert gex.zero_gamma is not None
@@ -120,6 +120,8 @@ def test_bs_gamma_and_estimated_gex_walls_and_zero_gamma() -> None:
     assert gex.total_call_oi == 70000
     assert gex.total_put_oi == 71000
     assert gex.put_call_ratio is not None and gex.put_call_ratio > 1.0
+    # Verify per-1%-move scale (Spot^2 * OI * 100 * Gamma * 0.01 -> ~$10M-$500M range here)
+    assert abs(gex.net_gex) < 5_000_000_000.0
 
 
 def test_technicals_rvol_quadrants_breadth_sectors_and_correlations() -> None:

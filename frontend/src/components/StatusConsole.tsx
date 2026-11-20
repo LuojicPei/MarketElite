@@ -347,7 +347,7 @@ export default function StatusConsole() {
                   MarketElite
                 </span>
                 <span className="rounded-full border border-zinc-300 bg-white px-2 py-0.5 font-mono text-[10px] uppercase tracking-wider text-zinc-600">
-                  Phase 0
+                  {health?.phase?.split("·")[0]?.trim() || "Phase 3"}
                 </span>
               </div>
               <p className="text-xs text-zinc-500">

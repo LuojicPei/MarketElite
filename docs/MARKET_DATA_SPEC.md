@@ -15,7 +15,7 @@
 ### 第 2 层：期权结构与波动率期限（15-30m / Daily · Alpaca Indicative + CBOE）
 * **Estimated GEX（做市商伽马敞口估算）**：
   * 拼接 Alpaca `/v1beta1/options/snapshots/{symbol}?feed=indicative`（报价、IV、Greeks）与 `/v2/options/contracts`（OCC 结算 `open_interest`，存在 T+1/T+2 滞后）。
-  * 公式：`Strike GEX = Spot² × OI × 100 × Gamma`（按做市商净空/净多行业惯例符号假定聚合，**UI 必须明确标注 `Estimated GEX` 假定前提**）。
+  * 公式：`Strike GEX ($/1% move) = Spot² × OI × 100 × Gamma × 0.01`（按做市商净空/净多行业惯例符号假定聚合为标的价格每波动 1% 对应的做市商对冲美元敞口，**UI 必须明确标注 `Estimated GEX` 假定前提**）。
   * 衍生位：**Call Wall**（正 Gamma 最大阻力位）、**Put Wall**（负/支撑集中位）、**Zero Gamma / Gamma Flip**（震荡均值回归 vs 趋势加速分界线）、**Put/Call Ratio**。
 * **波动率期限结构**：基于 `^VIX9D / ^VIX / ^VIX3M`（CBOE CSV / 极低频 `yfinance` + FRED `VIXCLS` 兜底）判断 Contango（平静）vs Backwardation（短期恐慌倒挂）。
 

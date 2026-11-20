@@ -81,6 +81,10 @@ async def get_agent_status(request: Request) -> dict[str, Any]:
     llm_pro_ready = bool(settings.llm_pro_api_key.strip() or settings.llm_fast_api_key.strip())
     llm_fast_ready = bool(settings.llm_fast_api_key.strip() or settings.llm_pro_api_key.strip())
 
+    is_prod_local_phoenix = settings.app_env.lower() == "production" and (
+        "localhost" in settings.phoenix_ui_url or "127.0.0.1" in settings.phoenix_ui_url
+    )
+
     return {
         "status": "ready" if llm_pro_ready else "llm_key_required",
         "llm_pro_ready": llm_pro_ready,
@@ -88,7 +92,7 @@ async def get_agent_status(request: Request) -> dict[str, Any]:
         "llm_pro_model": settings.llm_pro_model,
         "llm_fast_model": settings.llm_fast_model,
         "telemetry_enabled": settings.enable_telemetry,
-        "phoenix_ui_url": settings.phoenix_ui_url,
+        "phoenix_ui_url": None if is_prod_local_phoenix else settings.phoenix_ui_url,
         "mcp_endpoint": "/mcp-server/mcp",
         "mcp_tools": tools,
         "sec_cached_filings": int(cached_filings or 0),

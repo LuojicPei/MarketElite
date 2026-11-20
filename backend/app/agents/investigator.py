@@ -11,6 +11,7 @@ from typing import Annotated, Any, TypedDict
 import httpx
 from langchain_core.messages import (
     AIMessage,
+    AIMessageChunk,
     AnyMessage,
     HumanMessage,
     SystemMessage,
@@ -77,6 +78,21 @@ def compute_tool_fingerprint(tool_name: str, args: dict[str, Any]) -> str:
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16]
 
 
+def _loopback_httpx_factory(
+    headers: dict[str, str] | None = None,
+    timeout: httpx.Timeout | None = None,
+    auth: httpx.Auth | None = None,
+) -> httpx.AsyncClient:
+    """Create proxy-bypassing httpx client so local loopback FastMCP never hits HTTP_PROXY."""
+    return httpx.AsyncClient(
+        headers=headers,
+        timeout=timeout or httpx.Timeout(30.0, read=300.0),
+        auth=auth,
+        follow_redirects=True,
+        trust_env=False,
+    )
+
+
 async def load_mcp_tools(settings: Settings) -> list[BaseTool]:
     """Load read-only MarketElite tools via FastMCP Streamable HTTP with safe local fallback."""
     mcp_url = f"http://127.0.0.1:{settings.api_port}/mcp-server/mcp"
@@ -86,6 +102,7 @@ async def load_mcp_tools(settings: Settings) -> list[BaseTool]:
                 "marketelite": {
                     "transport": "streamable_http",
                     "url": mcp_url,
+                    "httpx_client_factory": _loopback_httpx_factory,
                 }
             }
         )
@@ -423,7 +440,7 @@ class InvestigatorAgentRunner:
         history: Sequence[dict[str, str]] | None = None,
     ) -> AsyncIterator[dict[str, Any]]:
         """Run Investigator graph within wall-clock timeout and yield structured SSE events."""
-        pro_llm = self._pro_llm or build_pro_llm(self._settings, streaming=False)
+        pro_llm = self._pro_llm or build_pro_llm(self._settings, streaming=True)
         fast_llm = self._fast_llm
         if fast_llm is None:
             try:
@@ -482,7 +499,7 @@ class InvestigatorAgentRunner:
             stream_iter = graph.astream(
                 init_state,
                 config={"recursion_limit": 25},
-                stream_mode=["updates", "values"],
+                stream_mode=["messages", "updates", "values"],
             ).__aiter__()
 
             while True:
@@ -494,7 +511,23 @@ class InvestigatorAgentRunner:
                 except StopAsyncIteration:
                     break
 
-                if mode == "values" and isinstance(chunk, dict):
+                if mode == "messages" and isinstance(chunk, tuple) and len(chunk) == 2:
+                    msg_chunk, meta = chunk
+                    node_name = meta.get("langgraph_node") if isinstance(meta, dict) else None
+                    has_tool_chunks = bool(
+                        getattr(msg_chunk, "tool_call_chunks", None)
+                        or getattr(msg_chunk, "tool_calls", None)
+                    )
+                    delta = getattr(msg_chunk, "content", "")
+                    if (
+                        isinstance(msg_chunk, (AIMessageChunk, AIMessage))
+                        and node_name in ("planner", "force_synthesize")
+                        and not has_tool_chunks
+                        and isinstance(delta, str)
+                        and delta
+                    ):
+                        yield {"event": "token", "data": {"delta": delta}}
+                elif mode == "values" and isinstance(chunk, dict):
                     final_state = chunk
                 elif mode == "updates" and isinstance(chunk, dict):
                     for node_name, node_out in chunk.items():

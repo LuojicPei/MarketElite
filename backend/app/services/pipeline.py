@@ -353,7 +353,11 @@ async def sync_calendars(
     except ProviderUnconfiguredError:
         states["fmp"] = "unconfigured"
     except (ProviderError, httpx.HTTPError) as exc:
-        states["fmp"] = f"error: {exc}"
+        err_text = str(exc)
+        if "HTTP 402" in err_text or "HTTP 403" in err_text:
+            states["fmp"] = "free_tier_gated_using_fred"
+        else:
+            states["fmp"] = f"error: {err_text}"
 
     if states.get("fmp") != "ok":
         try:

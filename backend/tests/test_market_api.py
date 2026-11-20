@@ -166,3 +166,16 @@ async def test_fred_macro_calendar_parses_releases() -> None:
         assert len(events) == 4
         assert all(ev["event_type"] == "macro" for ev in events)
         assert any("CPI" in ev["title"] for ev in events)
+
+
+def test_pipeline_sync_requires_admin_token_when_configured_or_prod(monkeypatch) -> None:
+    app = create_app()
+    prod_settings = Settings(_env_file=None, app_env="production", admin_api_token="topsecret-123")
+    monkeypatch.setattr("app.api.market.get_settings", lambda: prod_settings)
+
+    with TestClient(app) as client:
+        unauth = client.post("/api/pipeline/sync")
+        assert unauth.status_code == 403
+
+        wrong = client.post("/api/pipeline/sync", headers={"X-Admin-Token": "wrong"})
+        assert wrong.status_code == 403

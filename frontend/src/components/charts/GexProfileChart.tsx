@@ -29,13 +29,17 @@ export default function GexProfileChart({
 
     const chart = echarts.init(el);
     const strikes = profile.map((r) => String(r.strike));
-    // Display in $B scale for clean legibility (`Spot^2 * OI * 100 * Gamma`)
-    const callData = profile.map((r) => Number((r.call_gex / 1e9).toFixed(2)));
-    const putData = profile.map((r) => Number((r.put_gex / 1e9).toFixed(2)));
+    // Display in $B scale for clean legibility (per-1%-move dollar gamma)
+    const callData = profile.map((r) => Number((r.call_gex / 1e9).toFixed(3)));
+    const putData = profile.map((r) => Number((r.put_gex / 1e9).toFixed(3)));
+    const fmtGex = (raw: number) =>
+      Math.abs(raw) >= 1e9
+        ? `${raw >= 0 ? "+" : "-"}$${(Math.abs(raw) / 1e9).toFixed(2)}B`
+        : `${raw >= 0 ? "+" : "-"}$${(Math.abs(raw) / 1e6).toFixed(1)}M`;
 
     chart.setOption({
       animationDuration: 450,
-      grid: { left: 50, right: 16, top: 20, bottom: 28 },
+      grid: { left: 54, right: 16, top: 20, bottom: 28 },
       tooltip: {
         trigger: "axis",
         axisPointer: { type: "shadow" },
@@ -48,10 +52,10 @@ export default function GexProfileChart({
           const row = profile[first?.dataIndex ?? 0];
           if (!row) return "";
           return [
-            `<div style="font-weight:600;margin-bottom:4px">Strike $${row.strike}</div>`,
-            `Call GEX: +$${(row.call_gex / 1e9).toFixed(2)}B (OI ${row.call_oi.toLocaleString()})`,
-            `Put GEX: $${(row.put_gex / 1e9).toFixed(2)}B (OI ${row.put_oi.toLocaleString()})`,
-            `<b>Net GEX: $${(row.net_gex / 1e9).toFixed(2)}B</b>`,
+            `<div style="font-weight:600;margin-bottom:4px">Strike $${row.strike} (per 1% move)</div>`,
+            `Call GEX: ${fmtGex(row.call_gex)} (OI ${row.call_oi.toLocaleString()})`,
+            `Put GEX: ${fmtGex(row.put_gex)} (OI ${row.put_oi.toLocaleString()})`,
+            `<b>Net GEX: ${fmtGex(row.net_gex)}</b>`,
           ].join("<br/>");
         },
       },
@@ -80,7 +84,13 @@ export default function GexProfileChart({
           color: "#52525B",
           fontSize: 10,
           fontFamily: "JetBrains Mono, monospace",
-          formatter: (v: number) => `${v >= 0 ? "+" : ""}${v.toFixed(0)}B`,
+          formatter: (v: number) => {
+            if (Math.abs(v) < 0.001) return "0";
+            if (Math.abs(v) < 1) {
+              return `${v >= 0 ? "+" : "-"}${Math.round(Math.abs(v) * 1000)}M`;
+            }
+            return `${v >= 0 ? "+" : "-"}${Math.abs(v).toFixed(1)}B`;
+          },
         },
       },
       series: [

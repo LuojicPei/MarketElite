@@ -48,7 +48,9 @@ export default function InvestigatorDrawer({
     "Combine current Market Regime, technical momentum, and SEC 10-K/10-Q risk factors."
   );
 
-  // Agent SSE state
+  // Agent SSE state (multi-turn thread persistence + token streaming)
+  const [threadId, setThreadId] = useState<string>(() => `desk-${defaultSymbol}-${Date.now()}`);
+  const [turns, setTurns] = useState<{ role: "user" | "assistant"; content: string }[]>([]);
   const [runningAgent, setRunningAgent] = useState(false);
   const [nodeStatus, setNodeStatus] = useState<string | null>(null);
   const [toolTraces, setToolTraces] = useState<ToolTraceItem[]>([]);
@@ -80,27 +82,46 @@ export default function InvestigatorDrawer({
       .catch(() => setAgentStatus(null));
   }, [open]);
 
+  const handleResetThread = () => {
+    setThreadId(`desk-${symbolInput || defaultSymbol}-${Date.now()}`);
+    setTurns([]);
+    setToolTraces([]);
+    setAnswer("");
+    setNodeStatus(null);
+    setAgentError(null);
+  };
+
   const handleRunAgent = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!queryInput.trim() || runningAgent) return;
+    const trimmedQuery = queryInput.trim();
+    if (!trimmedQuery || runningAgent) return;
+    const historySnapshot = turns;
     setRunningAgent(true);
     setNodeStatus("Connecting FastMCP + LangGraph...");
     setToolTraces([]);
     setAnswer("");
     setAgentError(null);
 
+    let streamedText = "";
+    let completedAnswer = "";
+
     try {
-      const threadId = `desk-${symbolInput.toUpperCase()}-${Date.now()}`;
       await streamInvestigate(
         {
           thread_id: threadId,
-          query: queryInput.trim(),
+          query: trimmedQuery,
           symbol: symbolInput.trim() || null,
-          history: [],
+          history: historySnapshot,
         },
         (ev) => {
           if (ev.event === "status") {
             setNodeStatus(String(ev.data.detail ?? ev.data.node ?? "Processing"));
+          } else if (ev.event === "token") {
+            const delta = String(ev.data.delta ?? "");
+            if (delta) {
+              streamedText += delta;
+              setAnswer(streamedText);
+            }
           } else if (ev.event === "tool_result") {
             setToolTraces((prev) => [
               ...prev,
@@ -113,13 +134,21 @@ export default function InvestigatorDrawer({
               },
             ]);
           } else if (ev.event === "done") {
-            setAnswer(String(ev.data.answer ?? ""));
+            completedAnswer = String(ev.data.answer ?? streamedText);
+            setAnswer(completedAnswer);
             setNodeStatus(`Completed (${String(ev.data.steps_taken ?? 0)} steps)`);
           } else if (ev.event === "error") {
             setAgentError(String(ev.data.detail ?? "Agent error"));
           }
         }
       );
+      if (completedAnswer) {
+        setTurns([
+          ...historySnapshot,
+          { role: "user", content: trimmedQuery },
+          { role: "assistant", content: completedAnswer },
+        ]);
+      }
     } catch (err) {
       setAgentError(err instanceof Error ? err.message : "Investigation request failed");
     } finally {
@@ -270,8 +299,39 @@ export default function InvestigatorDrawer({
                         )}
                         Run
                       </button>
+                      {turns.length > 0 && (
+                        <button
+                          type="button"
+                          onClick={handleResetThread}
+                          className="rounded-xl border border-zinc-700 bg-zinc-900 px-3 py-2 font-mono text-xs text-zinc-300 transition hover:border-zinc-500 hover:text-white"
+                        >
+                          新会话
+                        </button>
+                      )}
                     </div>
                   </form>
+
+                  {(() => {
+                    const priorTurns = runningAgent ? turns : turns.slice(0, -2);
+                    if (priorTurns.length === 0) return null;
+                    return (
+                      <div className="space-y-2 rounded-xl border border-zinc-800 bg-zinc-950/60 p-3">
+                        <div className="font-mono text-[10px] uppercase tracking-wider text-zinc-500">
+                          多轮上下文记忆 Thread ({turns.length / 2} turns)
+                        </div>
+                        <div className="max-h-36 space-y-1.5 overflow-y-auto pr-1 text-xs">
+                          {priorTurns.map((t, i) => (
+                            <div key={i} className="text-zinc-400">
+                              <span className="font-mono text-[10px] text-zinc-500">
+                                {t.role === "user" ? "YOU: " : "AI: "}
+                              </span>
+                              <span className="line-clamp-2">{t.content}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })()}
 
                   {nodeStatus && (
                     <div className="flex items-center gap-2 rounded-lg border border-zinc-800 bg-zinc-900/70 px-3 py-2 font-mono text-[11px] text-zinc-300">

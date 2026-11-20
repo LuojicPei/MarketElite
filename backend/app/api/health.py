@@ -30,7 +30,7 @@ async def health_check(request: Request) -> dict[str, Any]:
     return {
         "service": settings.app_name,
         "env": settings.app_env,
-        "phase": "Phase 0 · Foundation & Telemetry",
+        "phase": "Phase 3 · Investigator & Hybrid RAG",
         "status": "ok" if all_ready else ("degraded" if core_ready else "initializing"),
         "checked_at": datetime.now(timezone.utc).isoformat(),
         "components": {

@@ -105,6 +105,14 @@ async def check_all() -> None:
                 )
                 if r.status_code == 200 and isinstance(r.json(), list):
                     results.append(("FMP Calendar", "OK", f"{len(r.json())} events in next 14d"))
+                elif r.status_code in (402, 403):
+                    results.append(
+                        (
+                            "FMP Calendar",
+                            "SKIP",
+                            f"Plan gated (HTTP {r.status_code}); FRED macro calendar fallback active",
+                        )
+                    )
                 else:
                     results.append(("FMP Calendar", "FAIL", f"HTTP {r.status_code}"))
             except _REQUEST_ERRORS as exc:

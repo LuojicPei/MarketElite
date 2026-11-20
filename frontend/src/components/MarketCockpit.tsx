@@ -45,8 +45,12 @@ function fmtSigned(val: number | null | undefined, digits = 2, suffix = ""): str
 
 function fmtBillions(val: number | null | undefined): string {
   if (val === null || val === undefined || Number.isNaN(val)) return "—";
-  const inB = val / 1e9;
-  return `${inB >= 0 ? "+" : ""}$${inB.toFixed(2)}B`;
+  const sign = val >= 0 ? "+" : "-";
+  const abs = Math.abs(val);
+  if (abs >= 1e9) {
+    return `${sign}$${(abs / 1e9).toFixed(2)}B`;
+  }
+  return `${sign}$${(abs / 1e6).toFixed(1)}M`;
 }
 
 function deltaTone(val: number | null | undefined, dark = false): string {
@@ -911,7 +915,7 @@ export default function MarketCockpit() {
 
                 <div className="mt-2 rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-1.5 font-mono text-[10px] text-zinc-600">
                   {activeGex?.assumption_label ??
-                    "Estimated GEX (Dealer Positioning Assumption · OCC T+1/T+2 OI)"}
+                    "Estimated GEX ($ / 1% Move · Dealer Positioning · OCC T+1/T+2 OI)"}
                 </div>
 
                 {/* Key Wall Stats */}

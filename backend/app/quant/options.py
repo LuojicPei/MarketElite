@@ -86,7 +86,7 @@ def _reprice_net_gex(contracts: list[OptionContractInput], candidate_spot: float
             continue
         gamma = bs_gamma(candidate_spot, c.strike, c.time_to_expiry_years, c.iv)
         sign = 1.0 if c.option_type.lower() == "call" else -1.0
-        total += sign * (candidate_spot**2) * c.open_interest * 100.0 * gamma
+        total += sign * (candidate_spot**2) * c.open_interest * 100.0 * gamma * 0.01
     return total
 
 
@@ -149,8 +149,10 @@ def compute_estimated_gex(
 ) -> EstimatedGexResult:
     """Compute Estimated GEX (Spot^2 * OI * 100 * Gamma) under standard dealer sign convention.
 
-    Convention: Dealers assumed net long calls (+1) and net short puts (-1).
+    Convention: Dealers assumed net long calls (+1) and net short puts (-1),
+    normalized to dollar gamma exposure per 1% spot move (`* 0.01`).
     """
+    assumption = "Estimated GEX ($ / 1% Move · Dealer Positioning · OCC T+1/T+2 OI)"
     if spot_price <= 0.0 or not contracts:
         return EstimatedGexResult(
             symbol=symbol.upper(),
@@ -163,7 +165,7 @@ def compute_estimated_gex(
             total_call_oi=0,
             total_put_oi=0,
             contracts_analyzed=0,
-            assumption_label="Estimated GEX (Dealer Positioning Assumption · OCC T+1/T+2 OI)",
+            assumption_label=assumption,
             strike_profile=[],
         )
 
@@ -180,7 +182,8 @@ def compute_estimated_gex(
             continue
 
         analyzed += 1
-        raw_gex = (spot_price**2) * float(c.open_interest) * 100.0 * gamma
+        # Dollar Gamma per 1% spot move: Spot^2 * OI * 100 * Gamma * 0.01
+        raw_gex = (spot_price**2) * float(c.open_interest) * 100.0 * gamma * 0.01
         bucket = by_strike.setdefault(
             round(float(c.strike), 4),
             {"call_gex": 0.0, "put_gex": 0.0, "call_oi": 0, "put_oi": 0},
@@ -230,6 +233,6 @@ def compute_estimated_gex(
         total_call_oi=total_call_oi,
         total_put_oi=total_put_oi,
         contracts_analyzed=analyzed,
-        assumption_label="Estimated GEX (Dealer Positioning Assumption · OCC T+1/T+2 OI)",
+        assumption_label=assumption,
         strike_profile=[asdict(r) for r in top_profile],
     )

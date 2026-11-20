@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import secrets
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, Header, HTTPException, Query, Request
 from sqlalchemy import desc, func, select
 
 from app.core.config import get_settings
@@ -213,9 +214,23 @@ async def get_asset_detail(
 async def trigger_pipeline_sync(
     request: Request,
     force_refresh: bool = Query(default=False),
+    x_admin_token: str | None = Header(default=None, alias="X-Admin-Token"),
 ) -> dict[str, Any]:
-    """Trigger immediate Phase 1 deterministic pipeline sync (dev/bootstrap control)."""
+    """Trigger immediate Phase 1 deterministic pipeline sync (protected in production)."""
     settings = get_settings()
+    expected = settings.admin_api_token.strip()
+    if expected:
+        if not x_admin_token or not secrets.compare_digest(x_admin_token.strip(), expected):
+            raise HTTPException(
+                status_code=403,
+                detail="Valid X-Admin-Token header required to trigger pipeline sync.",
+            )
+    elif settings.app_env.lower() == "production":
+        raise HTTPException(
+            status_code=403,
+            detail="HTTP pipeline sync is disabled in production unless ADMIN_API_TOKEN is set.",
+        )
+
     infra = request.app.state.infra
     session_factory = request.app.state.session_factory
     summary = await run_full_pipeline_sync(

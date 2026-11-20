@@ -207,7 +207,7 @@ async def get_asset_structure(
 
     if gex is not None:
         lines.append(
-            f"Estimated GEX (Dealer Assumption): Net=${gex.net_gex / 1e9:.2f}B, "
+            f"Estimated GEX ($/1% move, Dealer Assumption): Net=${gex.net_gex / 1e9:.2f}B, "
             f"Call Wall=${gex.call_wall}, Put Wall=${gex.put_wall}, "
             f"Zero Gamma=${gex.zero_gamma}, P/C OI={gex.put_call_ratio}"
         )
