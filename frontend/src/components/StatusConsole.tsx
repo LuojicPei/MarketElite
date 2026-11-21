@@ -191,10 +191,13 @@ function InfraBlock({
       initial={{ opacity: 0, y: 12 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.45, delay, ease: EASE_EXPO }}
+      whileHover={{ y: -4, scale: 1.008 }}
       onMouseMove={handleSpotlightMove}
       className={`${
-        isDark ? "velvet-black-block text-zinc-100" : "velvet-white-block text-zinc-900"
-      } rounded-2xl p-5 flex flex-col justify-between transition-transform duration-300 hover:-translate-y-0.5`}
+        isDark
+          ? "velvet-black-block text-zinc-100"
+          : "velvet-white-block text-zinc-900 dark:text-zinc-100"
+      } rounded-2xl p-5 flex flex-col justify-between transition-shadow duration-300`}
     >
       <div className="flex items-start justify-between gap-3">
         <div className="flex items-center gap-3">
@@ -202,7 +205,7 @@ function InfraBlock({
             className={`flex h-9 w-9 items-center justify-center rounded-xl border ${
               isDark
                 ? "border-white/15 bg-white/[0.06] text-white"
-                : "border-zinc-200 bg-zinc-50 text-zinc-900"
+                : "border-zinc-200/80 bg-zinc-50/80 text-zinc-900 dark:border-white/15 dark:bg-white/[0.06] dark:text-white"
             }`}
           >
             <Icon className="h-4 w-4" />
@@ -210,12 +213,12 @@ function InfraBlock({
           <div>
             <h3
               className={`text-sm font-semibold tracking-tight ${
-                isDark ? "text-white" : "text-zinc-950"
+                isDark ? "text-white" : "text-zinc-950 dark:text-white"
               }`}
             >
               {title}
             </h3>
-            <p className={`text-xs ${isDark ? "text-zinc-400" : "text-zinc-500"}`}>
+            <p className={`text-xs ${isDark ? "text-zinc-400" : "text-zinc-500 dark:text-zinc-400"}`}>
               {subtitle}
             </p>
           </div>
@@ -225,7 +228,7 @@ function InfraBlock({
           className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 font-mono text-[11px] font-medium ${
             isDark
               ? "border-white/15 bg-white/[0.05]"
-              : "border-zinc-200 bg-zinc-50"
+              : "border-zinc-200/80 bg-white/70 dark:border-white/15 dark:bg-white/[0.05]"
           } ${statusTextColor}`}
         >
           <StatusDot status={status} />
@@ -235,18 +238,18 @@ function InfraBlock({
 
       <div
         className={`mt-5 flex items-center justify-between border-t pt-3 text-xs ${
-          isDark ? "border-white/10" : "border-zinc-200"
+          isDark ? "border-white/10" : "border-zinc-200/80 dark:border-white/10"
         }`}
       >
         <span
-          className={`truncate font-mono ${isDark ? "text-zinc-400" : "text-zinc-500"}`}
+          className={`truncate font-mono ${isDark ? "text-zinc-400" : "text-zinc-500 dark:text-zinc-400"}`}
           title={health?.detail}
         >
           {health?.detail || "Awaiting backend probe..."}
         </span>
         <span
           className={`ml-2 shrink-0 font-mono font-medium tabular-nums ${
-            isDark ? "text-white" : "text-zinc-950"
+            isDark ? "text-white" : "text-zinc-950 dark:text-white"
           }`}
         >
           {health ? `${health.latency_ms.toFixed(1)} ms` : "-- ms"}
@@ -259,7 +262,7 @@ function InfraBlock({
           target="_blank"
           rel="noreferrer"
           className={`mt-2.5 inline-flex items-center gap-1 text-xs font-medium transition-opacity hover:opacity-75 ${
-            isDark ? "text-white" : "text-zinc-950"
+            isDark ? "text-white" : "text-zinc-950 dark:text-white"
           }`}
         >
           打开 Phoenix Trace 面板
@@ -359,90 +362,80 @@ export default function StatusConsole() {
   }, [apiError, health]);
 
   return (
-    <div className="min-h-screen flex flex-col">
-      {/* Gallery Minimal Top Bar */}
-      <header className="sticky top-0 z-30 border-b border-zinc-200/80 bg-[#F6F6F3]/85 backdrop-blur-xl">
-        <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-4 px-5 py-3.5">
-          <div className="flex items-center gap-3">
-            <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-obsidian-950 text-white shadow-sm">
-              <Activity className="h-[18px] w-[18px]" />
-            </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <span className="font-serif text-xl tracking-tight text-zinc-950">
-                  MarketElite
-                </span>
-                <span className="rounded-full border border-zinc-300 bg-white px-2 py-0.5 font-mono text-[10px] uppercase tracking-wider text-zinc-600">
-                  {health?.phase?.split("·")[0]?.trim() || "Phase 3"}
-                </span>
-              </div>
-              <p className="text-xs text-zinc-500">
-                US Equity Structure &amp; Multi-Agent Risk Terminal
-              </p>
-            </div>
+    <div className="mx-auto flex w-full max-w-[1460px] flex-col px-4 pt-5 sm:px-6">
+      {/* Compact Sub-Toolbar (no double sticky navbar!) */}
+      <div className="mb-5 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-zinc-200/80 bg-white/65 px-4 py-2.5 backdrop-blur-xl dark:border-white/10 dark:bg-white/[0.04]">
+        <div className="flex items-center gap-2.5">
+          <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-zinc-950 text-white dark:bg-white dark:text-zinc-950">
+            <Activity className="h-3.5 w-3.5" />
           </div>
-
-          {/* Monochrome Sliding Segmented Switch */}
-          <div className="flex items-center rounded-full border border-zinc-200 bg-white p-1 shadow-sm">
-            {(
-              [
-                { id: "telemetry", label: "系统健康探针", icon: Cpu },
-                { id: "evals", label: "Phase 5 黄金评测", icon: CheckCircle2 },
-                { id: "choreography", label: "Agent 闭环预览", icon: GitBranch },
-              ] as const
-            ).map((tab) => {
-              const Icon = tab.icon;
-              const isActive = activeTab === tab.id;
-              return (
-                <button
-                  key={tab.id}
-                  type="button"
-                  onClick={() => setActiveTab(tab.id)}
-                  className={`relative flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-xs font-medium transition-colors ${
-                    isActive ? "text-white" : "text-zinc-500 hover:text-zinc-950"
-                  }`}
-                >
-                  {isActive && (
-                    <motion.span
-                      layoutId="active-nav-pill"
-                      transition={{ type: "spring", stiffness: 420, damping: 32 }}
-                      className="absolute inset-0 rounded-full bg-obsidian-950"
-                    />
-                  )}
-                  <Icon className="relative z-10 h-3.5 w-3.5" />
-                  <span className="relative z-10">{tab.label}</span>
-                </button>
-              );
-            })}
-          </div>
-
-          {/* Status & Jet-Black Re-probe Trigger */}
-          <div className="flex items-center gap-2.5">
-            <div className="flex items-center gap-2 rounded-full border border-zinc-200 bg-white px-3 py-1.5 font-mono text-xs shadow-sm">
-              <StatusDot status={overallStatus.tone} />
-              <span className="font-medium text-zinc-900">{overallStatus.label}</span>
-              {roundTripMs !== null && (
-                <span className="border-l border-zinc-200 pl-2 tabular-nums text-zinc-500">
-                  {roundTripMs} ms
-                </span>
-              )}
-            </div>
-
-            <button
-              type="button"
-              onClick={probeSystem}
-              disabled={loading}
-              className="inline-flex items-center gap-1.5 rounded-full bg-obsidian-950 px-4 py-1.5 text-xs font-medium text-white shadow-sm transition-all hover:bg-zinc-800 active:scale-[0.98] disabled:opacity-50"
-            >
-              <RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
-              刷新探针
-            </button>
-          </div>
+          <span className="font-mono text-[11px] font-semibold tracking-wider text-zinc-800 dark:text-zinc-200">
+            {health?.phase || "Phase 5 · Infra & Golden Benchmark"}
+          </span>
         </div>
-      </header>
+
+        {/* Monochrome Sliding Segmented Switch */}
+        <div className="flex items-center rounded-full border border-zinc-200/80 bg-white/80 p-1 shadow-sm backdrop-blur-md dark:border-white/10 dark:bg-white/[0.05]">
+          {(
+            [
+              { id: "telemetry", label: "系统健康探针", icon: Cpu },
+              { id: "evals", label: "Phase 5 黄金评测", icon: CheckCircle2 },
+              { id: "choreography", label: "Agent 闭环预览", icon: GitBranch },
+            ] as const
+          ).map((tab) => {
+            const Icon = tab.icon;
+            const isActive = activeTab === tab.id;
+            return (
+              <button
+                key={tab.id}
+                type="button"
+                onClick={() => setActiveTab(tab.id)}
+                className={`relative flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-xs font-medium transition-colors ${
+                  isActive
+                    ? "text-white dark:text-zinc-950"
+                    : "text-zinc-500 hover:text-zinc-950 dark:text-zinc-400 dark:hover:text-white"
+                }`}
+              >
+                {isActive && (
+                  <motion.span
+                    layoutId="active-nav-pill"
+                    transition={{ type: "spring", stiffness: 420, damping: 32 }}
+                    className="absolute inset-0 rounded-full bg-obsidian-950 dark:bg-white"
+                  />
+                )}
+                <Icon className="relative z-10 h-3.5 w-3.5" />
+                <span className="relative z-10">{tab.label}</span>
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Status & Re-probe Trigger */}
+        <div className="flex items-center gap-2.5">
+          <div className="flex items-center gap-2 rounded-full border border-zinc-200/80 bg-white/80 px-3 py-1.5 font-mono text-xs shadow-sm dark:border-white/10 dark:bg-white/[0.05]">
+            <StatusDot status={overallStatus.tone} />
+            <span className="font-medium text-zinc-900 dark:text-zinc-100">{overallStatus.label}</span>
+            {roundTripMs !== null && (
+              <span className="border-l border-zinc-200 pl-2 tabular-nums text-zinc-500 dark:border-white/10 dark:text-zinc-400">
+                {roundTripMs} ms
+              </span>
+            )}
+          </div>
+
+          <button
+            type="button"
+            onClick={probeSystem}
+            disabled={loading}
+            className="inline-flex items-center gap-1.5 rounded-full bg-obsidian-950 px-4 py-1.5 text-xs font-medium text-white shadow-sm transition-all hover:bg-zinc-800 active:scale-[0.98] disabled:opacity-50 dark:bg-white dark:text-zinc-950 dark:hover:bg-zinc-200"
+          >
+            <RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
+            刷新探针
+          </button>
+        </div>
+      </div>
 
       {/* Main Gallery Stage */}
-      <main className="mx-auto w-full max-w-6xl flex-1 px-5 py-7">
+      <main className="w-full flex-1 pb-6">
         <AnimatePresence mode="wait">
           {activeTab === "telemetry" ? (
             <motion.div
@@ -558,20 +551,20 @@ export default function StatusConsole() {
                 onMouseMove={handleSpotlightMove}
                 className="velvet-white-block rounded-2xl p-5"
               >
-                <div className="mb-4 flex flex-wrap items-center justify-between gap-2 border-b border-zinc-200 pb-3">
+                <div className="mb-4 flex flex-wrap items-center justify-between gap-2 border-b border-zinc-200/80 pb-3 dark:border-white/10">
                   <div>
-                    <h2 className="text-sm font-semibold text-zinc-950">
+                    <h2 className="text-sm font-semibold text-zinc-950 dark:text-white">
                       美股数据源与大模型网关接入矩阵
                     </h2>
-                    <p className="text-xs text-zinc-500">
+                    <p className="text-xs text-zinc-500 dark:text-zinc-400">
                       免账号官方源开箱即用；其余在根目录{" "}
-                      <code className="rounded bg-zinc-100 px-1.5 py-0.5 font-mono text-zinc-800">
+                      <code className="rounded bg-zinc-100 px-1.5 py-0.5 font-mono text-zinc-800 dark:bg-white/10 dark:text-zinc-100">
                         .env
                       </code>{" "}
                       填入免费 Key 即可自动点亮。
                     </p>
                   </div>
-                  <div className="inline-flex items-center gap-1.5 rounded-full bg-obsidian-950 px-3 py-1 font-mono text-[11px] text-white">
+                  <div className="inline-flex items-center gap-1.5 rounded-full bg-obsidian-950 px-3 py-1 font-mono text-[11px] text-white dark:bg-white dark:text-zinc-950">
                     <Terminal className="h-3 w-3" />
                     python -m scripts.check_keys
                   </div>
@@ -658,26 +651,27 @@ export default function StatusConsole() {
                       key={item.id}
                       initial={{ opacity: 0, y: 8 }}
                       animate={{ opacity: 1, y: 0 }}
-                      transition={{ duration: 0.35, delay: 0.03 * idx, ease: EASE_EXPO }}
-                      className="flex items-center justify-between gap-3 rounded-xl border border-zinc-200/90 bg-[#FAF9F6] px-3.5 py-3 transition-colors hover:border-zinc-400"
+                      whileHover={{ y: -2, scale: 1.01 }}
+                      transition={{ duration: 0.25, delay: 0.02 * idx, ease: EASE_EXPO }}
+                      className="flex items-center justify-between gap-3 rounded-xl border border-zinc-200/80 bg-white/60 px-3.5 py-3 backdrop-blur-md transition-colors hover:border-zinc-400 dark:border-white/10 dark:bg-white/[0.04] dark:hover:border-white/25"
                     >
                       <div className="min-w-0">
-                        <div className="truncate text-xs font-semibold text-zinc-900">
+                        <div className="truncate text-xs font-semibold text-zinc-900 dark:text-white">
                           {item.name}
                         </div>
-                        <div className="mt-1 flex items-center gap-1.5 font-mono text-[11px] text-zinc-500">
+                        <div className="mt-1 flex items-center gap-1.5 font-mono text-[11px] text-zinc-500 dark:text-zinc-400">
                           <span>{item.mode}</span>
                           <span>·</span>
                           <span>{item.requires_key ? "API Key" : "Zero-Key"}</span>
                         </div>
                       </div>
                       {item.configured ? (
-                        <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-obsidian-950 px-2.5 py-0.5 font-mono text-[11px] text-emerald-400">
+                        <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-obsidian-950 px-2.5 py-0.5 font-mono text-[11px] text-emerald-400 dark:bg-emerald-500/20 dark:text-emerald-300">
                           <CheckCircle2 className="h-3 w-3" />
                           READY
                         </span>
                       ) : (
-                        <span className="inline-flex shrink-0 items-center rounded-full border border-zinc-300 bg-white px-2.5 py-0.5 font-mono text-[11px] text-amber-700">
+                        <span className="inline-flex shrink-0 items-center rounded-full border border-zinc-300 bg-white px-2.5 py-0.5 font-mono text-[11px] text-amber-700 dark:border-amber-500/30 dark:bg-amber-950/40 dark:text-amber-300">
                           PENDING
                         </span>
                       )}
@@ -736,16 +730,18 @@ export default function StatusConsole() {
                 <>
                   <div className="grid grid-cols-2 gap-3.5 md:grid-cols-4">
                     {Object.entries(evalReport.categories).map(([cat, st]) => (
-                      <button
+                      <motion.button
                         key={cat}
                         type="button"
+                        whileHover={{ y: -3, scale: 1.01 }}
+                        transition={{ duration: 0.22 }}
                         onClick={() =>
                           setEvalCategoryFilter((prev) => (prev === cat ? "all" : cat))
                         }
-                        className={`rounded-2xl border p-4 text-left transition ${
+                        className={`rounded-2xl border p-4 text-left backdrop-blur-md transition-colors ${
                           evalCategoryFilter === cat
-                            ? "border-zinc-950 bg-zinc-950 text-white"
-                            : "border-zinc-200 bg-white text-zinc-900 hover:border-zinc-400"
+                            ? "border-zinc-950 bg-zinc-950 text-white dark:border-white/40 dark:bg-white dark:text-zinc-950"
+                            : "velvet-white-block text-zinc-900 dark:text-zinc-100"
                         }`}
                       >
                         <div className="font-mono text-[10px] uppercase tracking-wider opacity-70">
@@ -759,16 +755,16 @@ export default function StatusConsole() {
                             {st.pass_rate_pct}%
                           </span>
                         </div>
-                      </button>
+                      </motion.button>
                     ))}
                   </div>
 
-                  <div className="rounded-2xl border border-zinc-200 bg-white p-5">
-                    <div className="mb-3 flex flex-wrap items-center justify-between gap-2 border-b border-zinc-100 pb-2 font-mono text-xs">
-                      <span className="font-semibold text-zinc-900">
+                  <div className="velvet-white-block rounded-2xl p-5">
+                    <div className="mb-3 flex flex-wrap items-center justify-between gap-2 border-b border-zinc-200/80 pb-2 font-mono text-xs dark:border-white/10">
+                      <span className="font-semibold text-zinc-900 dark:text-white">
                         测试用例明细 ({evalCategoryFilter === "all" ? "全部 32 项" : evalCategoryFilter})
                       </span>
-                      <span className="text-zinc-500">
+                      <span className="text-zinc-500 dark:text-zinc-400">
                         耗时 {evalReport.duration_ms} ms · 更新于 {evalReport.generated_at}
                       </span>
                     </div>
@@ -780,24 +776,24 @@ export default function StatusConsole() {
                         .map((r) => (
                           <div
                             key={r.id}
-                            className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-zinc-100 bg-[#FAF9F6] px-3 py-2 text-xs"
+                            className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-zinc-200/70 bg-white/60 px-3 py-2 text-xs transition-colors hover:border-zinc-300 dark:border-white/10 dark:bg-white/[0.04] dark:hover:border-white/25"
                           >
                             <div className="flex items-center gap-2.5">
                               <span
                                 className={`rounded px-1.5 py-0.5 font-mono text-[10px] font-bold ${
                                   r.passed
-                                    ? "bg-emerald-100 text-emerald-800"
-                                    : "bg-rose-100 text-rose-800"
+                                    ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-500/20 dark:text-emerald-300"
+                                    : "bg-rose-100 text-rose-800 dark:bg-rose-500/20 dark:text-rose-300"
                                 }`}
                               >
                                 {r.passed ? "PASS" : "FAIL"}
                               </span>
-                              <span className="font-mono text-[11px] font-semibold text-zinc-700">
+                              <span className="font-mono text-[11px] font-semibold text-zinc-700 dark:text-zinc-300">
                                 {r.id}
                               </span>
-                              <span className="text-zinc-900">{r.name}</span>
+                              <span className="text-zinc-900 dark:text-zinc-100">{r.name}</span>
                             </div>
-                            <span className="font-mono text-[10px] text-zinc-500">
+                            <span className="font-mono text-[10px] text-zinc-500 dark:text-zinc-400">
                               {r.elapsed_ms}ms · {JSON.stringify(r.observed)}
                             </span>
                           </div>
@@ -806,7 +802,7 @@ export default function StatusConsole() {
                   </div>
                 </>
               ) : (
-                <div className="rounded-2xl border border-dashed border-zinc-300 bg-white p-8 text-center font-mono text-xs text-zinc-500">
+                <div className="velvet-white-block rounded-2xl p-8 text-center font-mono text-xs text-zinc-500 dark:text-zinc-400">
                   点击右上角「立即运行 Golden Evals」获取 32 项自动化验证得分。
                 </div>
               )}
@@ -905,21 +901,21 @@ export default function StatusConsole() {
                       <div className="mt-3">
                         <div
                           className={`text-[11px] font-medium ${
-                            isSelected ? "text-zinc-400" : "text-zinc-500"
+                            isSelected ? "text-zinc-400" : "text-zinc-500 dark:text-zinc-400"
                           }`}
                         >
                           {stage.tag}
                         </div>
                         <div
                           className={`mt-0.5 text-sm font-semibold ${
-                            isSelected ? "text-white" : "text-zinc-950"
+                            isSelected ? "text-white" : "text-zinc-950 dark:text-white"
                           }`}
                         >
                           {stage.title}
                         </div>
                         <div
                           className={`mt-1 text-xs ${
-                            isSelected ? "text-zinc-400" : "text-zinc-500"
+                            isSelected ? "text-zinc-400" : "text-zinc-500 dark:text-zinc-400"
                           }`}
                         >
                           {stage.subtitle}
@@ -946,32 +942,32 @@ export default function StatusConsole() {
                     className="velvet-white-block space-y-4 rounded-2xl p-6 lg:col-span-7"
                   >
                     <div className="flex flex-wrap items-center gap-2">
-                      <span className="rounded-full bg-obsidian-950 px-3 py-0.5 font-mono text-xs font-medium text-white">
+                      <span className="rounded-full bg-obsidian-950 px-3 py-0.5 font-mono text-xs font-medium text-white dark:bg-white dark:text-zinc-950">
                         {activeStage.tag}
                       </span>
-                      <span className="rounded-full border border-zinc-300 bg-zinc-50 px-3 py-0.5 font-mono text-xs text-zinc-700">
+                      <span className="rounded-full border border-zinc-300 bg-zinc-50 px-3 py-0.5 font-mono text-xs text-zinc-700 dark:border-white/15 dark:bg-white/10 dark:text-zinc-200">
                         目标交付：{activeStage.phase}
                       </span>
                     </div>
 
                     <div>
-                      <h2 className="font-serif text-2xl text-zinc-950">
+                      <h2 className="font-serif text-2xl text-zinc-950 dark:text-white">
                         {activeStage.title}
                       </h2>
-                      <p className="mt-2 text-sm leading-relaxed text-zinc-600">
+                      <p className="mt-2 text-sm leading-relaxed text-zinc-600 dark:text-zinc-300">
                         {activeStage.summary}
                       </p>
                     </div>
 
                     <div>
-                      <div className="mb-2 font-mono text-[11px] font-semibold uppercase tracking-wider text-zinc-500">
+                      <div className="mb-2 font-mono text-[11px] font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
                         Core Engineering Components
                       </div>
                       <div className="flex flex-wrap gap-2">
                         {activeStage.components.map((comp) => (
                           <span
                             key={comp}
-                            className="rounded-lg border border-zinc-200 bg-[#FAF9F6] px-2.5 py-1 font-mono text-xs text-zinc-800"
+                            className="rounded-lg border border-zinc-200 bg-[#FAF9F6] px-2.5 py-1 font-mono text-xs text-zinc-800 dark:border-white/15 dark:bg-white/[0.06] dark:text-zinc-200"
                           >
                             {comp}
                           </span>

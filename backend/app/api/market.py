@@ -3,6 +3,7 @@ from __future__ import annotations
 import secrets
 from typing import Any
 
+import httpx
 from fastapi import APIRouter, Header, HTTPException, Query, Request
 from sqlalchemy import desc, func, select
 
@@ -22,6 +23,7 @@ from app.services.pipeline import (
 )
 from app.services.providers.alpaca import AlpacaClient
 from app.services.providers.macro_feeds import MacroFeedsClient
+from app.services.providers.yahoo_tape import MACRO_TAPE_SPECS, fetch_macro_tape_snapshot
 from app.services.resilience import DualTTLCache, ProviderError
 
 router = APIRouter(prefix="/api", tags=["market"])
@@ -165,6 +167,72 @@ async def get_market_regime_history(
     return {"count": len(rows), "history": rows}
 
 
+@router.get("/market/macro-tape")
+async def get_market_macro_tape(
+    request: Request,
+    force_refresh: bool = Query(default=False),
+) -> dict[str, Any]:
+    """Return live/cached global indices, yields, metals, oil & FX micro-K-line tape."""
+    infra = request.app.state.infra
+    cache = DualTTLCache(infra.redis)
+    try:
+        return await fetch_macro_tape_snapshot(cache=cache, force_refresh=force_refresh)
+    except (ProviderError, httpx.HTTPError, OSError, RuntimeError, ValueError):
+        # Fallback cleanly to persisted Postgres daily bars for core macro proxies if external fetch fails
+        session_factory = request.app.state.session_factory
+        proxy_specs = [
+            spec
+            for spec in MACRO_TAPE_SPECS
+            if spec.proxy_symbol in {"SPY", "QQQ", "IWM", "TLT", "UUP", "GLD", "CPER", "BTCUSDT"}
+        ]
+        items: list[dict[str, Any]] = []
+        async with session_factory() as session:
+            seen_proxies: set[str] = set()
+            for spec in proxy_specs:
+                if spec.proxy_symbol in seen_proxies:
+                    continue
+                seen_proxies.add(spec.proxy_symbol)
+                stmt = (
+                    select(MarketDailyBar)
+                    .where(MarketDailyBar.symbol == spec.proxy_symbol)
+                    .order_by(desc(MarketDailyBar.trade_date))
+                    .limit(22)
+                )
+                rows = list((await session.execute(stmt)).scalars().all())
+                rows.reverse()
+                if len(rows) < 2:
+                    continue
+                latest = rows[-1]
+                prev = rows[-2]
+                change_abs = float(latest.close) - float(prev.close)
+                change_pct = (change_abs / float(prev.close) * 100.0) if float(prev.close) > 0 else 0.0
+                items.append(
+                    {
+                        "yahoo_symbol": spec.proxy_symbol,
+                        "proxy_symbol": spec.proxy_symbol,
+                        "name": f"{spec.proxy_symbol}",
+                        "zh_name": spec.zh_name,
+                        "decimals": 2,
+                        "unit": "$",
+                        "price": round(float(latest.close), 2),
+                        "prev_close": round(float(prev.close), 2),
+                        "change_abs": round(change_abs, 2),
+                        "change_pct": round(change_pct, 2),
+                        "bars": [
+                            {
+                                "t": idx,
+                                "o": float(r.open),
+                                "h": float(r.high),
+                                "l": float(r.low),
+                                "c": float(r.close),
+                            }
+                            for idx, r in enumerate(rows)
+                        ],
+                    }
+                )
+        return {"status": "fallback", "source": "postgres_fallback", "count": len(items), "items": items}
+
+
 @router.get("/assets/{symbol}")
 async def get_asset_detail(
     symbol: str,
@@ -212,7 +280,36 @@ async def get_asset_detail(
         return bars, gex, eps
 
     db_bars, gex_row, eps_rows = await _load_from_db()
-    is_crypto_or_etf = sym in {"BTCUSDT", "SPY", "QQQ", "IWM", "RSP", "TLT", "HYG", "IEF", "XLK", "XLF", "XLE", "XLV", "XLY", "XLI", "XLP", "XLU", "XLB", "XLRE", "XLC"}
+    is_crypto_or_etf = sym in {
+        "BTCUSDT",
+        "SPY",
+        "QQQ",
+        "IWM",
+        "RSP",
+        "DIA",
+        "SOXX",
+        "TLT",
+        "HYG",
+        "IEF",
+        "GLD",
+        "SLV",
+        "USO",
+        "BNO",
+        "UNG",
+        "UUP",
+        "CPER",
+        "XLK",
+        "XLF",
+        "XLE",
+        "XLV",
+        "XLY",
+        "XLI",
+        "XLP",
+        "XLU",
+        "XLB",
+        "XLRE",
+        "XLC",
+    }
 
     if ensure_if_missing and (
         not db_bars
@@ -275,7 +372,7 @@ async def get_asset_detail(
         try:
             alpaca = AlpacaClient(settings, cache=DualTTLCache(infra.redis))
             news_items = await alpaca.get_news([sym], limit=8)
-        except ProviderError:
+        except (ProviderError, httpx.HTTPError, OSError):
             news_items = []
 
     recommendations: list[dict[str, Any]] = []
@@ -283,7 +380,7 @@ async def get_asset_detail(
         try:
             feeds = MacroFeedsClient(settings, cache=DualTTLCache(infra.redis))
             recommendations = await feeds.get_finnhub_recommendation_trends(sym)
-        except ProviderError:
+        except (ProviderError, httpx.HTTPError, OSError):
             recommendations = []
 
     # Deduplicate EPS periods cleanly if multiple snapshot dates stored

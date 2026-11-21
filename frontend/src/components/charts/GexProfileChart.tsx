@@ -3,6 +3,7 @@
 import React, { useEffect, useRef } from "react";
 import * as echarts from "echarts";
 import { StrikeGexProfile } from "@/lib/api";
+import { useTheme } from "@/components/ThemeProvider";
 
 interface GexProfileChartProps {
   profile: StrikeGexProfile[];
@@ -22,6 +23,8 @@ export default function GexProfileChart({
   height = 240,
 }: GexProfileChartProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const { theme } = useTheme();
+  const isDark = theme === "dark";
 
   useEffect(() => {
     const el = containerRef.current;
@@ -62,10 +65,10 @@ export default function GexProfileChart({
       xAxis: {
         type: "category",
         data: strikes,
-        axisLine: { lineStyle: { color: "#D4D4D8" } },
+        axisLine: { lineStyle: { color: isDark ? "rgba(255,255,255,0.16)" : "#D4D4D8" } },
         axisTick: { show: false },
         axisLabel: {
-          color: "#52525B",
+          color: isDark ? "#A1A1AA" : "#52525B",
           fontSize: 10,
           fontFamily: "JetBrains Mono, monospace",
           interval: Math.max(0, Math.floor(strikes.length / 8) - 1),
@@ -79,9 +82,14 @@ export default function GexProfileChart({
       },
       yAxis: {
         type: "value",
-        splitLine: { lineStyle: { color: "#F4F4F5", type: "dashed" } },
+        splitLine: {
+          lineStyle: {
+            color: isDark ? "rgba(255,255,255,0.07)" : "#E4E4E7",
+            type: "dashed",
+          },
+        },
         axisLabel: {
-          color: "#52525B",
+          color: isDark ? "#A1A1AA" : "#52525B",
           fontSize: 10,
           fontFamily: "JetBrains Mono, monospace",
           formatter: (v: number) => {
@@ -119,13 +127,13 @@ export default function GexProfileChart({
       observer.disconnect();
       chart.dispose();
     };
-  }, [profile, spotPrice, callWall, putWall, zeroGamma]);
+  }, [profile, spotPrice, callWall, putWall, zeroGamma, isDark]);
 
   if (profile.length === 0) {
     return (
       <div
         style={{ height }}
-        className="flex items-center justify-center rounded-xl border border-zinc-200 bg-zinc-50 text-xs font-mono text-zinc-500"
+        className="flex items-center justify-center rounded-xl border border-zinc-200/80 bg-white/60 text-xs font-mono text-zinc-500 dark:border-white/10 dark:bg-white/[0.03] dark:text-zinc-400"
       >
         No options Estimated GEX strikes available
       </div>

@@ -288,6 +288,37 @@ export interface TrackedAssetSummary {
   volume: number;
 }
 
+export interface MacroTapeBar {
+  t: number;
+  o: number;
+  h: number;
+  l: number;
+  c: number;
+}
+
+export interface MacroTapeItem {
+  yahoo_symbol: string;
+  proxy_symbol: string;
+  name: string;
+  zh_name: string;
+  decimals: number;
+  unit: string;
+  price: number;
+  prev_close: number;
+  change_abs: number;
+  change_pct: number;
+  bars: MacroTapeBar[];
+}
+
+export interface MacroTapeResponse {
+  status: string;
+  source: string;
+  is_stale?: boolean;
+  fetched_at?: string;
+  count: number;
+  items: MacroTapeItem[];
+}
+
 const _RAW_API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL;
 const API_BASE =
   _RAW_API_BASE !== undefined ? _RAW_API_BASE.replace(/\/$/, "") : "http://localhost:8100";
@@ -380,6 +411,17 @@ export async function fetchRegimeHistory(
   });
   if (!res.ok) {
     throw new Error(`Regime history failed (${res.status})`);
+  }
+  return res.json();
+}
+
+export async function fetchMacroTape(forceRefresh = false): Promise<MacroTapeResponse> {
+  const res = await fetch(
+    `${API_BASE}/api/market/macro-tape${forceRefresh ? "?force_refresh=true" : ""}`,
+    { cache: "no-store" }
+  );
+  if (!res.ok) {
+    throw new Error(`Macro tape failed (${res.status})`);
   }
   return res.json();
 }

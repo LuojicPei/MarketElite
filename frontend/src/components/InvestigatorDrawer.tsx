@@ -24,6 +24,7 @@ import {
 } from "@/lib/api";
 import RiskCriticPanel from "@/components/RiskCriticPanel";
 import { MarkdownReport } from "@/components/MarkdownReport";
+import SpotlightBlock from "@/components/SpotlightBlock";
 
 const EASE_EXPO = [0.16, 1, 0.3, 1] as const;
 
@@ -313,10 +314,10 @@ export default function InvestigatorDrawer({
           ) : (
             <div
               key={`turn-${idx}`}
-              className="rounded-2xl rounded-tl-sm border border-zinc-200 bg-white p-4 text-zinc-950 shadow-sm"
+              className="rounded-2xl rounded-tl-sm border border-zinc-200 bg-white/95 p-4 text-zinc-950 shadow-sm backdrop-blur-md dark:border-white/15 dark:bg-white/[0.06] dark:text-zinc-100"
             >
-              <div className="mb-2 flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-wider text-zinc-500">
-                <ShieldCheck className="h-3.5 w-3.5 text-emerald-600" />
+              <div className="mb-2 flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
+                <ShieldCheck className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" />
                 Investigator 历史回复
               </div>
               <MarkdownReport content={t.content} compact />
@@ -379,10 +380,10 @@ export default function InvestigatorDrawer({
         )}
 
         {answer && (
-          <div className="rounded-2xl border border-zinc-200 bg-white p-5 text-zinc-950 shadow-sm">
-            <div className="mb-3 flex flex-wrap items-center justify-between gap-2 border-b border-zinc-100 pb-2 font-mono text-[10px] uppercase tracking-wider text-zinc-500">
+          <div className="rounded-2xl border border-zinc-200 bg-white/95 p-5 text-zinc-950 shadow-sm backdrop-blur-md dark:border-white/15 dark:bg-white/[0.06] dark:text-zinc-100">
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-2 border-b border-zinc-100 pb-2 font-mono text-[10px] uppercase tracking-wider text-zinc-500 dark:border-white/10 dark:text-zinc-400">
               <span className="flex items-center gap-1.5">
-                <ShieldCheck className="h-3.5 w-3.5 text-emerald-600" />
+                <ShieldCheck className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" />
                 Investigator 结构化投研结论 (Read-Only Grounded)
               </span>
               <button
@@ -402,8 +403,8 @@ export default function InvestigatorDrawer({
                 }}
                 className={`inline-flex items-center gap-1 rounded-full px-3 py-1 font-mono text-[10px] font-semibold transition ${
                   tradeIntent?.detected
-                    ? "bg-zinc-950 text-white hover:bg-zinc-800"
-                    : "border border-zinc-300 bg-zinc-100 text-zinc-900 hover:bg-zinc-200"
+                    ? "bg-zinc-950 text-white hover:bg-zinc-800 dark:bg-white dark:text-zinc-950 dark:hover:bg-zinc-200"
+                    : "border border-zinc-300 bg-zinc-100 text-zinc-900 hover:bg-zinc-200 dark:border-white/20 dark:bg-white/10 dark:text-white dark:hover:bg-white/20"
                 }`}
               >
                 {tradeIntent?.detected
@@ -525,15 +526,15 @@ export default function InvestigatorDrawer({
             {secResult.chunks.map((ch) => (
               <div
                 key={ch.chunk_id}
-                className="rounded-xl border border-zinc-200 bg-white p-4 text-zinc-950"
+                className="rounded-xl border border-zinc-200 bg-white/95 p-4 text-zinc-950 backdrop-blur-md dark:border-white/15 dark:bg-white/[0.06] dark:text-zinc-100"
               >
                 <div className="mb-1.5 flex flex-wrap items-center justify-between gap-2 font-mono text-[11px]">
-                  <span className="font-semibold text-zinc-900">
+                  <span className="font-semibold text-zinc-900 dark:text-white">
                     [{ch.symbol} {ch.form_type} {ch.filing_date}] · {ch.section_title}
                   </span>
-                  <span className="text-zinc-500">RRF {ch.rrf_score.toFixed(4)}</span>
+                  <span className="text-zinc-500 dark:text-zinc-400">RRF {ch.rrf_score.toFixed(4)}</span>
                 </div>
-                <p className="text-xs leading-relaxed text-zinc-700">{ch.content}</p>
+                <p className="text-xs leading-relaxed text-zinc-700 dark:text-zinc-300">{ch.content}</p>
               </div>
             ))}
           </div>
@@ -546,7 +547,7 @@ export default function InvestigatorDrawer({
   if (mode === "split") {
     return (
       <div className="space-y-5">
-        <div className="flex flex-wrap items-center justify-between gap-3 rounded-[22px] border border-[#141418] bg-[#0B0B0D] px-5 py-4 text-white">
+        <SpotlightBlock tone="obsidian" tilt="subtle" className="flex flex-wrap items-center justify-between gap-3 px-5 py-4 text-white">
           <div className="flex items-center gap-3">
             <span className="flex h-9 w-9 items-center justify-center rounded-xl border border-zinc-700 bg-zinc-900">
               <Bot className="h-4 w-4 text-white" />
@@ -571,14 +572,14 @@ export default function InvestigatorDrawer({
               <ArrowUpRight className="h-3.5 w-3.5" />
             </a>
           )}
-        </div>
+        </SpotlightBlock>
 
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
-          <div className="rounded-[22px] border border-zinc-800 bg-[#0B0B0D] p-5 text-zinc-100 lg:col-span-7">
+          <SpotlightBlock tone="obsidian" tilt="subtle" className="p-5 lg:col-span-7">
             {renderCopilotPane()}
-          </div>
+          </SpotlightBlock>
 
-          <div className="rounded-[22px] border border-zinc-800 bg-[#0B0B0D] p-5 text-zinc-100 lg:col-span-5">
+          <SpotlightBlock tone="obsidian" tilt="subtle" className="p-5 lg:col-span-5">
             <div className="mb-4 flex items-center justify-between border-b border-zinc-800 pb-3">
               <div className="inline-flex rounded-full border border-zinc-800 bg-zinc-900 p-0.5 font-mono text-[11px]">
                 <button
@@ -613,7 +614,7 @@ export default function InvestigatorDrawer({
             ) : (
               renderSecPane()
             )}
-          </div>
+          </SpotlightBlock>
         </div>
       </div>
     );
@@ -628,7 +629,7 @@ export default function InvestigatorDrawer({
           animate={{ x: 0, opacity: 1 }}
           exit={{ x: "100%", opacity: 0.6 }}
           transition={{ duration: 0.3, ease: EASE_EXPO }}
-          className="fixed inset-y-0 right-0 z-50 flex w-full max-w-2xl flex-col border-l border-zinc-800 bg-[#0B0B0D] text-zinc-100 shadow-[-24px_0_70px_-15px_rgba(0,0,0,0.65)]"
+          className="velvet-black-block fixed inset-y-0 right-0 z-50 flex w-full max-w-2xl flex-col rounded-none border-l border-white/15 text-zinc-100 shadow-[-24px_0_70px_-15px_rgba(0,0,0,0.75)]"
         >
           {/* Header Bar */}
           <div className="flex flex-wrap items-center justify-between gap-2 border-b border-zinc-800 px-5 py-3.5">

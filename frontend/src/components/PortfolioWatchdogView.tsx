@@ -19,6 +19,7 @@ import {
 } from "@/lib/api";
 import { formatQuadrantOutcome, formatRegimeLabel } from "@/lib/i18n";
 import { MarkdownReport } from "./MarkdownReport";
+import SpotlightBlock from "@/components/SpotlightBlock";
 
 interface PortfolioWatchdogViewProps {
   onSelectSymbol?: (symbol: string) => void;
@@ -182,7 +183,7 @@ export function PortfolioWatchdogView({
   return (
     <div className="space-y-6">
       {/* Top Account & Phase 5 Controls */}
-      <section className="rounded-[24px] border border-[#141418] bg-[#0B0B0D] p-5 text-[#F3F3F0] shadow-xl">
+      <SpotlightBlock tone="obsidian" tilt="subtle" className="p-5">
         <div className="flex flex-wrap items-center justify-between gap-4 border-b border-white/10 pb-4">
           <div>
             <p className="font-mono text-[10px] uppercase tracking-[0.22em] text-zinc-400">
@@ -253,10 +254,10 @@ export function PortfolioWatchdogView({
             </div>
           </div>
         </div>
-      </section>
+      </SpotlightBlock>
 
       {banner && (
-        <div className="flex items-center justify-between rounded-xl border border-emerald-300 bg-emerald-50 px-4 py-2.5 text-xs text-emerald-950">
+        <div className="flex items-center justify-between rounded-xl border border-emerald-300 bg-emerald-50/90 px-4 py-2.5 text-xs text-emerald-950 backdrop-blur-md dark:border-emerald-500/40 dark:bg-emerald-950/50 dark:text-emerald-200">
           <span>{banner}</span>
           <button type="button" onClick={() => setBanner(null)} className="font-mono text-[11px] underline">
             关闭
@@ -264,42 +265,42 @@ export function PortfolioWatchdogView({
         </div>
       )}
       {errorMsg && (
-        <div className="rounded-xl border border-rose-300 bg-rose-50 px-4 py-2.5 text-xs text-rose-900">
+        <div className="rounded-xl border border-rose-300 bg-rose-50/90 px-4 py-2.5 text-xs text-rose-900 backdrop-blur-md dark:border-rose-500/40 dark:bg-rose-950/50 dark:text-rose-200">
           {errorMsg}
         </div>
       )}
 
       {/* Middle Row: Open Positions & Orders (Left) + Watchdog Anomaly Radar (Right) */}
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
-        <div className="space-y-4 rounded-[20px] border border-[#E2E2DE] bg-white p-5 lg:col-span-7">
-          <div className="flex items-center justify-between border-b border-[#EFEFEB] pb-3">
+        <SpotlightBlock tone="gallery" tilt="subtle" className="space-y-4 p-5 lg:col-span-7">
+          <div className="flex items-center justify-between border-b border-zinc-200/80 pb-3 dark:border-white/10">
             <div>
-              <h3 className="font-serif text-base font-semibold text-[#0B0B0D]">
+              <h3 className="font-serif text-base font-semibold text-zinc-950 dark:text-white">
                 Alpaca 实时持仓与活动挂单
               </h3>
-              <p className="text-[11px] text-[#6B6B73]">
+              <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
                 直接管理 Paper 持仓平仓与尚未成交的 Bracket / 限价挂单
               </p>
             </div>
             <button
               type="button"
               onClick={loadAll}
-              className="rounded-md border border-[#D8D8D2] px-2.5 py-1 font-mono text-[11px] text-[#3A3A40] hover:bg-[#F3F3F0]"
+              className="rounded-md border border-zinc-300/90 px-2.5 py-1 font-mono text-[11px] text-zinc-700 transition hover:bg-zinc-100 dark:border-white/15 dark:text-zinc-200 dark:hover:bg-white/10"
             >
               刷新
             </button>
           </div>
 
           {loading ? (
-            <div className="py-6 text-center text-xs text-[#6B6B73]">加载 Alpaca 持仓与订单中...</div>
+            <div className="py-6 text-center text-xs text-zinc-500 dark:text-zinc-400">加载 Alpaca 持仓与订单中...</div>
           ) : (
             <>
               <div>
-                <h4 className="mb-2 font-mono text-[10px] font-semibold uppercase tracking-wider text-[#6B6B73]">
+                <h4 className="mb-2 font-mono text-[10px] font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
                   当前持仓 Positions ({ledger?.positions.length ?? 0})
                 </h4>
                 {!ledger || ledger.positions.length === 0 ? (
-                  <p className="rounded-xl border border-dashed border-[#E2E2DE] px-3 py-4 text-center text-xs text-[#71717A]">
+                  <p className="rounded-xl border border-dashed border-zinc-300/80 px-3 py-4 text-center text-xs text-zinc-500 dark:border-white/15 dark:text-zinc-400">
                     当前无持仓。可在「投研与风控台」审查并发起 Bracket 下单。
                   </p>
                 ) : (
@@ -307,24 +308,26 @@ export function PortfolioWatchdogView({
                     {ledger.positions.map((pos) => (
                       <div
                         key={pos.symbol}
-                        className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-[#E7E7E2] bg-[#FAF9F6] px-3.5 py-2.5 text-xs"
+                        className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-zinc-200/80 bg-white/60 px-3.5 py-2.5 text-xs backdrop-blur-md dark:border-white/10 dark:bg-white/[0.04]"
                       >
                         <div className="flex items-center gap-3">
                           <button
                             type="button"
                             onClick={() => onSelectSymbol?.(pos.symbol)}
-                            className="font-mono text-sm font-bold text-[#0B0B0D] underline-offset-4 hover:underline"
+                            className="font-mono text-sm font-bold text-zinc-950 underline-offset-4 hover:underline dark:text-white"
                           >
                             {pos.symbol}
                           </button>
-                          <span className="font-mono text-[#4B4B52]">
+                          <span className="font-mono text-zinc-600 dark:text-zinc-300">
                             {pos.qty} 股 @ 均价 ${pos.avg_entry_price.toFixed(2)} → 现价 ${pos.current_price.toFixed(2)}
                           </span>
                         </div>
                         <div className="flex items-center gap-3">
                           <span
                             className={`font-mono font-semibold ${
-                              pos.unrealized_pl >= 0 ? "text-emerald-700" : "text-rose-700"
+                              pos.unrealized_pl >= 0
+                                ? "text-emerald-700 dark:text-emerald-400"
+                                : "text-rose-700 dark:text-rose-400"
                             }`}
                           >
                             {pos.unrealized_pl >= 0 ? "+" : ""}${pos.unrealized_pl.toFixed(2)} (
@@ -334,7 +337,7 @@ export function PortfolioWatchdogView({
                             type="button"
                             disabled={busyId === `close-${pos.symbol}`}
                             onClick={() => handleClosePosition(pos.symbol)}
-                            className="rounded-md border border-rose-300 bg-rose-50 px-2.5 py-1 font-mono text-[11px] font-medium text-rose-800 hover:bg-rose-100 disabled:opacity-50"
+                            className="rounded-md border border-rose-300 bg-rose-50 px-2.5 py-1 font-mono text-[11px] font-medium text-rose-800 hover:bg-rose-100 disabled:opacity-50 dark:border-rose-500/40 dark:bg-rose-950/60 dark:text-rose-200 dark:hover:bg-rose-900/70"
                           >
                             {busyId === `close-${pos.symbol}` ? "平仓中..." : "市价平仓"}
                           </button>
@@ -346,7 +349,7 @@ export function PortfolioWatchdogView({
               </div>
 
               <div className="pt-2">
-                <h4 className="mb-2 font-mono text-[10px] font-semibold uppercase tracking-wider text-[#6B6B73]">
+                <h4 className="mb-2 font-mono text-[10px] font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
                   近期 Alpaca 委托 Orders ({ledger?.orders.length ?? 0})
                 </h4>
                 <div className="max-h-56 space-y-1.5 overflow-y-auto pr-1">
@@ -357,16 +360,16 @@ export function PortfolioWatchdogView({
                     return (
                       <div
                         key={ord.id}
-                        className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-[#EFEFEB] px-3 py-2 text-[11px] font-mono"
+                        className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-zinc-200/70 bg-white/50 px-3 py-2 font-mono text-[11px] dark:border-white/10 dark:bg-white/[0.03]"
                       >
                         <div className="flex items-center gap-2">
-                          <span className="font-semibold text-[#0B0B0D]">{ord.symbol}</span>
-                          <span className="uppercase text-[#5F5F67]">
+                          <span className="font-semibold text-zinc-950 dark:text-white">{ord.symbol}</span>
+                          <span className="uppercase text-zinc-600 dark:text-zinc-300">
                             {ord.side} {ord.qty} ({ord.order_class})
                           </span>
                         </div>
                         <div className="flex items-center gap-2">
-                          <span className="rounded bg-[#F3F3F0] px-2 py-0.5 text-[10px] text-[#3A3A40]">
+                          <span className="rounded bg-zinc-100 px-2 py-0.5 text-[10px] text-zinc-700 dark:bg-white/10 dark:text-zinc-200">
                             {ord.status}
                             {ord.filled_avg_price ? ` @ $${Number(ord.filled_avg_price).toFixed(2)}` : ""}
                           </span>
@@ -375,7 +378,7 @@ export function PortfolioWatchdogView({
                               type="button"
                               disabled={busyId === `cancel-${ord.id}`}
                               onClick={() => handleCancelOrder(ord.id)}
-                              className="rounded border border-amber-300 bg-amber-50 px-2 py-0.5 text-[10px] text-amber-900 hover:bg-amber-100 disabled:opacity-50"
+                              className="rounded border border-amber-300 bg-amber-50 px-2 py-0.5 text-[10px] text-amber-900 hover:bg-amber-100 disabled:opacity-50 dark:border-amber-500/40 dark:bg-amber-950/60 dark:text-amber-200"
                             >
                               {busyId === `cancel-${ord.id}` ? "撤单中" : "撤单"}
                             </button>
@@ -388,23 +391,23 @@ export function PortfolioWatchdogView({
               </div>
             </>
           )}
-        </div>
+        </SpotlightBlock>
 
         {/* Agent 3 Watchdog Alerts */}
-        <div className="space-y-3 rounded-[20px] border border-[#E2E2DE] bg-white p-5 lg:col-span-5">
-          <div className="flex items-center justify-between border-b border-[#EFEFEB] pb-3">
+        <SpotlightBlock tone="gallery" tilt="subtle" className="space-y-3 p-5 lg:col-span-5">
+          <div className="flex items-center justify-between border-b border-zinc-200/80 pb-3 dark:border-white/10">
             <div>
-              <h3 className="font-serif text-base font-semibold text-[#0B0B0D]">
+              <h3 className="font-serif text-base font-semibold text-zinc-950 dark:text-white">
                 Agent 3 盘中异常预警雷达
               </h3>
-              <p className="text-[11px] text-[#6B6B73]">
+              <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
                 自动扫描 RVOL ≥ 1.8x 放量、负 GEX 破位、VIX 倒挂与 24h 高危宏观事件
               </p>
             </div>
           </div>
 
           {alerts.length === 0 ? (
-            <div className="rounded-xl border border-dashed border-[#E2E2DE] px-4 py-8 text-center text-xs text-[#6B6B73]">
+            <div className="rounded-xl border border-dashed border-zinc-300/80 px-4 py-8 text-center text-xs text-zinc-500 dark:border-white/15 dark:text-zinc-400">
               暂无异常预警记录，可点击上方「立即运行盘中哨兵扫描 (Watchdog)」。
             </div>
           ) : (
@@ -414,10 +417,10 @@ export function PortfolioWatchdogView({
                   key={al.id}
                   className={`rounded-xl border p-3.5 transition ${
                     al.acknowledged
-                      ? "border-[#EFEFEB] bg-[#FAF9F6] opacity-70"
+                      ? "border-zinc-200/70 bg-white/40 opacity-70 dark:border-white/10 dark:bg-white/[0.02]"
                       : al.severity === "high"
-                        ? "border-rose-300 bg-rose-50/40"
-                        : "border-amber-300 bg-amber-50/40"
+                        ? "border-rose-300/90 bg-rose-50/50 dark:border-rose-500/40 dark:bg-rose-950/25"
+                        : "border-amber-300/90 bg-amber-50/50 dark:border-amber-500/40 dark:bg-amber-950/25"
                   }`}
                 >
                   <div className="flex items-start justify-between gap-2">
@@ -435,12 +438,12 @@ export function PortfolioWatchdogView({
                         <button
                           type="button"
                           onClick={() => onSelectSymbol?.(al.symbol || "SPY")}
-                          className="rounded border border-[#D8D8D2] bg-white px-2 py-0.5 font-mono text-[10px] font-semibold text-[#0B0B0D] hover:bg-[#F3F3F0]"
+                          className="rounded border border-zinc-300/80 bg-white/80 px-2 py-0.5 font-mono text-[10px] font-semibold text-zinc-950 hover:bg-white dark:border-white/15 dark:bg-white/10 dark:text-white"
                         >
                           {al.symbol}
                         </button>
                       )}
-                      <span className="font-mono text-[10px] text-[#71717A]">
+                      <span className="font-mono text-[10px] text-zinc-500 dark:text-zinc-400">
                         {new Date(al.created_at).toLocaleString()}
                       </span>
                     </div>
@@ -449,13 +452,13 @@ export function PortfolioWatchdogView({
                         type="button"
                         disabled={busyId === `ack-${al.id}`}
                         onClick={() => handleAckAlert(al.id)}
-                        className="shrink-0 rounded border border-[#D4D4CE] bg-white px-2 py-0.5 font-mono text-[10px] text-[#3A3A40] hover:bg-[#0B0B0D] hover:text-white"
+                        className="shrink-0 rounded border border-zinc-300 bg-white/80 px-2 py-0.5 font-mono text-[10px] text-zinc-700 hover:bg-zinc-950 hover:text-white dark:border-white/20 dark:bg-white/10 dark:text-zinc-200 dark:hover:bg-white dark:hover:text-zinc-950"
                       >
                         已知悉
                       </button>
                     )}
                   </div>
-                  <div className="mt-1.5 text-[13px] font-semibold text-[#0B0B0D]">{al.title}</div>
+                  <div className="mt-1.5 text-[13px] font-semibold text-zinc-950 dark:text-white">{al.title}</div>
                   <div className="mt-1">
                     <MarkdownReport content={al.summary_markdown} compact />
                   </div>
@@ -463,39 +466,39 @@ export function PortfolioWatchdogView({
               ))}
             </div>
           )}
-        </div>
+        </SpotlightBlock>
       </div>
 
       {/* Bottom Row: PaperTrade Ledger + 4-Quadrant Reviews & Long-Term Episodic Memory */}
       <div className="grid grid-cols-1 gap-6 xl:grid-cols-12">
-        <div className="rounded-[20px] border border-[#E2E2DE] bg-white p-5 xl:col-span-6">
-          <div className="border-b border-[#EFEFEB] pb-3">
-            <h3 className="font-serif text-base font-semibold text-[#0B0B0D]">
+        <SpotlightBlock tone="gallery" tilt="subtle" className="p-5 xl:col-span-6">
+          <div className="border-b border-zinc-200/80 pb-3 dark:border-white/10">
+            <h3 className="font-serif text-base font-semibold text-zinc-950 dark:text-white">
               PostgreSQL 决策审计台账与一键复盘 (PaperTrade)
             </h3>
-            <p className="text-[11px] text-[#6B6B73]">
+            <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
               对任意已审核或平仓交易生成「过程纪律 × 市场结果」4 象限归因并写入记忆库
             </p>
           </div>
 
           <div className="mt-3 max-h-[380px] space-y-2.5 overflow-y-auto pr-1">
             {(ledger?.paper_trades ?? []).length === 0 ? (
-              <p className="py-8 text-center text-xs text-[#71717A]">
+              <p className="py-8 text-center text-xs text-zinc-500 dark:text-zinc-400">
                 暂无 PaperTrade 记录。请在「投研与风控台」发起一笔 Risk Critic 交易审批。
               </p>
             ) : (
               (ledger?.paper_trades ?? []).map((t) => (
                 <div
                   key={t.id}
-                  className="rounded-xl border border-[#E7E7E2] bg-[#FAF9F6] p-3 text-xs"
+                  className="rounded-xl border border-zinc-200/80 bg-white/60 p-3 text-xs backdrop-blur-md dark:border-white/10 dark:bg-white/[0.04]"
                 >
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <div className="flex items-center gap-2 font-mono">
-                      <span className="font-bold text-[#0B0B0D]">#{t.id} {t.symbol}</span>
-                      <span className="rounded bg-[#0B0B0D] px-1.5 py-0.5 text-[10px] uppercase text-white">
+                      <span className="font-bold text-zinc-950 dark:text-white">#{t.id} {t.symbol}</span>
+                      <span className="rounded bg-zinc-950 px-1.5 py-0.5 text-[10px] uppercase text-white dark:bg-white dark:text-zinc-950">
                         {t.side} {t.qty}
                       </span>
-                      <span className="rounded border border-[#D8D8D2] bg-white px-2 py-0.5 text-[10px]">
+                      <span className="rounded border border-zinc-300/80 bg-white/80 px-2 py-0.5 text-[10px] text-zinc-800 dark:border-white/15 dark:bg-white/10 dark:text-zinc-200">
                         {t.status}
                       </span>
                     </div>
@@ -503,49 +506,51 @@ export function PortfolioWatchdogView({
                       type="button"
                       disabled={busyId === `reflect-${t.id}`}
                       onClick={() => handleReflectTrade(t.id)}
-                      className="rounded-lg border border-[#0B0B0D] bg-white px-2.5 py-1 font-mono text-[10px] font-semibold text-[#0B0B0D] transition hover:bg-[#0B0B0D] hover:text-white disabled:opacity-50"
+                      className="rounded-lg border border-zinc-950 bg-white px-2.5 py-1 font-mono text-[10px] font-semibold text-zinc-950 transition hover:bg-zinc-950 hover:text-white disabled:opacity-50 dark:border-white/25 dark:bg-white/10 dark:text-white dark:hover:bg-white dark:hover:text-zinc-950"
                     >
                       {busyId === `reflect-${t.id}` ? "归因中..." : "生成 4-象限复盘"}
                     </button>
                   </div>
-                  <div className="mt-1.5 flex flex-wrap gap-x-4 gap-y-1 font-mono text-[11px] text-[#4B4B52]">
+                  <div className="mt-1.5 flex flex-wrap gap-x-4 gap-y-1 font-mono text-[11px] text-zinc-600 dark:text-zinc-300">
                     <span>入场: {t.entry_price ? `$${t.entry_price.toFixed(2)}` : "—"}</span>
                     <span>止损: {t.stop_loss_price ? `$${t.stop_loss_price.toFixed(2)}` : "—"}</span>
                     <span>止盈: {t.take_profit_price ? `$${t.take_profit_price.toFixed(2)}` : "—"}</span>
                     <span>预算: {t.risk_budget_pct}%</span>
                     <span>体制: {formatRegimeLabel(t.regime_at_entry).split(" · ")[0]}</span>
                     {t.realized_pnl !== null && t.realized_pnl !== undefined && (
-                      <span className={t.realized_pnl >= 0 ? "font-semibold text-emerald-700" : "font-semibold text-rose-700"}>
+                      <span className={t.realized_pnl >= 0 ? "font-semibold text-emerald-700 dark:text-emerald-400" : "font-semibold text-rose-700 dark:text-rose-400"}>
                         已实现盈亏: {t.realized_pnl >= 0 ? "+" : ""}${t.realized_pnl.toFixed(2)}
                       </span>
                     )}
                   </div>
                   {t.rationale_summary && (
-                    <p className="mt-1 text-[11px] text-[#5F5F67] line-clamp-2">{t.rationale_summary}</p>
+                    <p className="mt-1 text-[11px] text-zinc-500 dark:text-zinc-400 line-clamp-2">{t.rationale_summary}</p>
                   )}
                 </div>
               ))
             )}
           </div>
-        </div>
+        </SpotlightBlock>
 
         {/* 4-Quadrant Reviews & Long-Term Episodic Memory */}
-        <div className="rounded-[20px] border border-[#E2E2DE] bg-white p-5 xl:col-span-6">
-          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[#EFEFEB] pb-3">
+        <SpotlightBlock tone="gallery" tilt="subtle" className="p-5 xl:col-span-6">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-zinc-200/80 pb-3 dark:border-white/10">
             <div>
-              <h3 className="font-serif text-base font-semibold text-[#0B0B0D]">
+              <h3 className="font-serif text-base font-semibold text-zinc-950 dark:text-white">
                 4-象限归因复盘与长期情景记忆 (BM25 + pgvector)
               </h3>
-              <p className="text-[11px] text-[#6B6B73]">
+              <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
                 过往决策教训会自动注入 Investigator 与 Risk Critic 的前置上下文中
               </p>
             </div>
-            <div className="inline-flex rounded-lg border border-[#E2E2DE] bg-[#F5F5F2] p-0.5 font-mono text-[11px]">
+            <div className="inline-flex rounded-lg border border-zinc-200/80 bg-zinc-100/80 p-0.5 font-mono text-[11px] dark:border-white/10 dark:bg-white/[0.06]">
               <button
                 type="button"
                 onClick={() => setMemoryTab("reviews")}
-                className={`rounded-md px-2.5 py-1 ${
-                  memoryTab === "reviews" ? "bg-[#0B0B0D] text-white" : "text-[#5F5F67]"
+                className={`rounded-md px-2.5 py-1 transition ${
+                  memoryTab === "reviews"
+                    ? "bg-zinc-950 text-white dark:bg-white dark:text-zinc-950"
+                    : "text-zinc-600 dark:text-zinc-300"
                 }`}
               >
                 复盘归因 ({reviews.length})
@@ -553,8 +558,10 @@ export function PortfolioWatchdogView({
               <button
                 type="button"
                 onClick={() => setMemoryTab("memories")}
-                className={`rounded-md px-2.5 py-1 ${
-                  memoryTab === "memories" ? "bg-[#0B0B0D] text-white" : "text-[#5F5F67]"
+                className={`rounded-md px-2.5 py-1 transition ${
+                  memoryTab === "memories"
+                    ? "bg-zinc-950 text-white dark:bg-white dark:text-zinc-950"
+                    : "text-zinc-600 dark:text-zinc-300"
                 }`}
               >
                 记忆库 ({(recalledMemories ?? memories).length})
@@ -568,11 +575,11 @@ export function PortfolioWatchdogView({
               value={memQuery}
               onChange={(e) => setMemQuery(e.target.value)}
               placeholder="检索历史教训（例如：NVDA Zero Gamma RISK_OFF stop_loss...）"
-              className="flex-1 rounded-lg border border-[#D8D8D2] bg-[#FAF9F6] px-3 py-1.5 text-xs text-[#0B0B0D] placeholder:text-[#8E8E96]"
+              className="flex-1 rounded-lg border border-zinc-300/80 bg-white/75 px-3 py-1.5 text-xs text-zinc-950 placeholder:text-zinc-400 dark:border-white/15 dark:bg-white/[0.05] dark:text-white dark:placeholder:text-zinc-500"
             />
             <button
               type="submit"
-              className="rounded-lg bg-[#0B0B0D] px-3.5 py-1.5 font-mono text-[11px] font-medium text-white hover:bg-[#1E1E24]"
+              className="rounded-lg bg-zinc-950 px-3.5 py-1.5 font-mono text-[11px] font-medium text-white hover:bg-zinc-800 dark:bg-white dark:text-zinc-950 dark:hover:bg-zinc-200"
             >
               检索记忆
             </button>
@@ -583,7 +590,7 @@ export function PortfolioWatchdogView({
                   setMemQuery("");
                   setRecalledMemories(null);
                 }}
-                className="rounded-lg border border-[#D8D8D2] px-2.5 py-1.5 font-mono text-[11px] text-[#5F5F67]"
+                className="rounded-lg border border-zinc-300/80 px-2.5 py-1.5 font-mono text-[11px] text-zinc-600 dark:border-white/15 dark:text-zinc-300"
               >
                 重置
               </button>
@@ -593,27 +600,27 @@ export function PortfolioWatchdogView({
           <div className="mt-3 max-h-[325px] space-y-2.5 overflow-y-auto pr-1">
             {memoryTab === "reviews" ? (
               reviews.length === 0 ? (
-                <p className="py-8 text-center text-xs text-[#71717A]">
+                <p className="py-8 text-center text-xs text-zinc-500 dark:text-zinc-400">
                   暂无复盘记录。点击左侧任意交易的「生成 4-象限复盘」即可创建。
                 </p>
               ) : (
                 reviews.map((r) => {
                   const q = formatQuadrantOutcome(r.quadrant_outcome);
                   return (
-                    <div key={r.id} className="rounded-xl border border-[#E7E7E2] bg-[#FAF9F6] p-3.5">
+                    <div key={r.id} className="rounded-xl border border-zinc-200/80 bg-white/60 p-3.5 backdrop-blur-md dark:border-white/10 dark:bg-white/[0.04]">
                       <div className="flex flex-wrap items-center justify-between gap-2">
                         <span
                           className={`rounded-full px-2.5 py-0.5 font-mono text-[10px] font-semibold ${
                             q.tone === "good"
-                              ? "bg-emerald-100 text-emerald-900"
+                              ? "bg-emerald-100 text-emerald-900 dark:bg-emerald-500/20 dark:text-emerald-300"
                               : q.tone === "warn"
-                                ? "bg-amber-100 text-amber-900"
-                                : "bg-rose-100 text-rose-900"
+                                ? "bg-amber-100 text-amber-900 dark:bg-amber-500/20 dark:text-amber-300"
+                                : "bg-rose-100 text-rose-900 dark:bg-rose-500/20 dark:text-rose-300"
                           }`}
                         >
                           {q.label}
                         </span>
-                        <span className="font-mono text-[11px] text-[#5F5F67]">
+                        <span className="font-mono text-[11px] text-zinc-600 dark:text-zinc-400">
                           #{r.paper_trade_id} {r.symbol} · {r.horizon}
                           {r.alpha_vs_spy_pct !== null && r.alpha_vs_spy_pct !== undefined
                             ? ` · Alpha vs SPY ${r.alpha_vs_spy_pct >= 0 ? "+" : ""}${r.alpha_vs_spy_pct.toFixed(2)}%`
@@ -628,20 +635,20 @@ export function PortfolioWatchdogView({
                 })
               )
             ) : (recalledMemories ?? memories).length === 0 ? (
-              <p className="py-8 text-center text-xs text-[#71717A]">未检索到匹配的长期经验记忆。</p>
+              <p className="py-8 text-center text-xs text-zinc-500 dark:text-zinc-400">未检索到匹配的长期经验记忆。</p>
             ) : (
               (recalledMemories ?? memories).map((m) => (
-                <div key={m.id} className="rounded-xl border border-[#E7E7E2] bg-[#FAF9F6] p-3">
+                <div key={m.id} className="rounded-xl border border-zinc-200/80 bg-white/60 p-3 backdrop-blur-md dark:border-white/10 dark:bg-white/[0.04]">
                   <div className="flex items-center justify-between gap-2 font-mono text-[11px]">
-                    <span className="font-semibold text-[#0B0B0D]">{m.title}</span>
-                    <span className="text-[#71717A]">{m.regime_label}</span>
+                    <span className="font-semibold text-zinc-950 dark:text-white">{m.title}</span>
+                    <span className="text-zinc-500 dark:text-zinc-400">{m.regime_label}</span>
                   </div>
-                  <p className="mt-1 text-xs leading-relaxed text-[#3A3A40]">{m.lesson_text}</p>
+                  <p className="mt-1 text-xs leading-relaxed text-zinc-700 dark:text-zinc-300">{m.lesson_text}</p>
                 </div>
               ))
             )}
           </div>
-        </div>
+        </SpotlightBlock>
       </div>
     </div>
   );
