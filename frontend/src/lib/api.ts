@@ -383,6 +383,20 @@ export interface MacroTapeResponse {
   items: MacroTapeItem[];
 }
 
+export interface DiscoverRelatedArticle {
+  source: string;
+  title_zh: string;
+  headline_en: string;
+  url: string;
+  published_at: string;
+}
+
+export interface DiscoverArticleParagraph {
+  index: number;
+  en: string;
+  zh: string;
+}
+
 export interface DiscoverNewsItem {
   id: string;
   title_zh: string;
@@ -395,6 +409,25 @@ export interface DiscoverNewsItem {
   url: string;
   image_proxy_url: string;
   published_at: string;
+  related_articles?: DiscoverRelatedArticle[];
+}
+
+export interface DiscoverArticleDetail {
+  status: string;
+  id: string;
+  title_zh: string;
+  headline_en: string;
+  category_zh: string;
+  source: string;
+  sources: string[];
+  source_count: number;
+  url: string;
+  image_proxy_url: string;
+  published_at: string;
+  access_status: "full" | "summary_only";
+  paragraphs: DiscoverArticleParagraph[];
+  related_articles: DiscoverRelatedArticle[];
+  cached?: boolean;
 }
 
 export interface DiscoverNewsResponse {
@@ -430,6 +463,20 @@ export async function fetchDiscoverNews(
   });
   if (!res.ok) {
     throw new Error(`Discover news failed (${res.status})`);
+  }
+  return res.json();
+}
+
+export async function fetchDiscoverArticleDetail(
+  articleId: string
+): Promise<DiscoverArticleDetail> {
+  const res = await fetch(
+    `${API_BASE}/api/market/discover/${encodeURIComponent(articleId)}`,
+    { cache: "no-store" }
+  );
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail || `Article detail failed (${res.status})`);
   }
   return res.json();
 }

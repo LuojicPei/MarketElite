@@ -11,9 +11,14 @@ from typing_extensions import Self
 
 from app.core.config import Settings
 from app.main import create_app
+from app.services.free_translate import polish_finance_zh, translate_en_to_zh_free
 from app.services.news_discover import (
+    _META_PREFIX,
     DISCOVER_CACHE_KEY,
+    DISCOVER_COOLDOWN_KEY,
+    extract_article_paragraphs,
     fetch_discover_candidates,
+    get_discover_article_detail,
     get_discover_article_image,
     is_editorial_photo_url,
     make_article_id,
@@ -244,8 +249,8 @@ async def test_fetch_discover_candidates_clusters_sources_and_filters_logos() ->
                     "news": [
                         {
                             "title": "Nvidia chips demand stays strong despite volatility",
-                            "publisher": "Barron's",
-                            "link": "https://www.barrons.com/nvda-chips",
+                            "publisher": "24/7 Wall St.",
+                            "link": "https://finance.yahoo.com/news/nvda-chips",
                             "providerPublishTime": now_ts - 300,
                             "thumbnail": {
                                 "resolutions": [
@@ -268,15 +273,15 @@ async def test_fetch_discover_candidates_clusters_sources_and_filters_logos() ->
             http_client=client,
             verify_images=True,
         )
-    assert len(items) >= 2
-    assert items[0]["source"] in {"CNBC", "Barron's"}
-    # Lifestyle clickbait must rank below market-moving S&P 500 and Nvidia stories
-    assert "American Dream" not in items[0]["headline"]
+    assert len(items) == 2
+    assert all("American Dream" not in x["headline"] for x in items)
     sp_item = next(x for x in items if "S&P 500" in x["headline"])
     assert sp_item["source_count"] >= 2
     assert "Reuters" in sp_item["sources"]
+    assert sp_item["related_articles"][0]["source"] == "Reuters"
     nvda_item = next(x for x in items if "Nvidia" in x["headline"])
     assert nvda_item["image_url"] == "https://media.zenfs.com/hd-nvda.jpg"
+    assert nvda_item["source"] == "24/7 Wall St."
 
 
 async def test_discover_endpoint_and_image_proxy(monkeypatch) -> None:
@@ -302,12 +307,20 @@ async def test_discover_endpoint_and_image_proxy(monkeypatch) -> None:
                     "url": "https://cnbc.com/sp500",
                     "image_proxy_url": f"/api/market/discover/{sample_id}/image",
                     "published_at": datetime.now(timezone.utc).isoformat(),
+                    "related_articles": [],
                 }
             ],
         },
-        source="news_discover",
+        source="news_discover_free",
         soft_ttl_seconds=600,
         hard_ttl_seconds=3600,
+    )
+    await cache.write_envelope(
+        DISCOVER_COOLDOWN_KEY,
+        payload={"locked": True},
+        source="cooldown",
+        soft_ttl_seconds=180,
+        hard_ttl_seconds=300,
     )
 
     with TestClient(app) as client:
@@ -319,11 +332,177 @@ async def test_discover_endpoint_and_image_proxy(monkeypatch) -> None:
         assert body["count"] == 1
         assert body["items"][0]["title_zh"] == "标普 500 止跌企稳 科技股引领反弹"
 
+        # Public force_refresh within cooldown must return cached result without re-scraping
+        cd_resp = client.get("/api/market/discover?limit=12&force_refresh=true")
+        assert cd_resp.status_code == 200
+        assert cd_resp.json()["cache_source"] == "redis_cooldown"
+
         bad_img = client.get("/api/market/discover/bad$id/image")
         assert bad_img.status_code == 400
 
-    # Direct image helper fallback returns SVG cleanly when unmapped
+        missing_art = client.get("/api/market/discover/disc_doesnotexist")
+        assert missing_art.status_code == 404
+
     raw, ctype = await get_discover_article_image("disc_missing1234", cache)
     assert ctype == "image/svg+xml"
     assert b"<svg" in raw
+
+
+def test_polish_finance_zh_and_article_extraction() -> None:
+    polished = polish_finance_zh(
+        "标准普尔 500 指数和字母表表现亮眼，个人消费支出数据公布。",
+        "S&P 500 and Alphabet shine as PCE report drops.",
+    )
+    assert "标普 500" in polished
+    assert "Alphabet" in polished
+    assert "PCE" in polished
+
+    sample_html = """
+    <html><body>
+      <div class="ArticleBody-articleBody">
+        <p>In this article</p>
+        <p>Stocks fell sharply on Monday as Treasury yields climbed to multi-month highs across the curve.</p>
+        <p>Alphabet outperformed megacap peers while investors reassessed artificial intelligence capital expenditure.</p>
+        <p>Federal Reserve officials emphasized patience ahead of the upcoming core PCE inflation reading.</p>
+      </div>
+    </body></html>
+    """
+    paras, paywall = extract_article_paragraphs(sample_html)
+    assert paywall is False
+    assert len(paras) == 3
+    assert "In this article" not in paras[0]
+
+
+async def test_free_translate_and_article_modal_detail() -> None:
+    fake_redis = InMemoryFakeRedis()
+    cache = DualTTLCache(fake_redis)
+    sample_id = make_article_id("https://www.cnbc.com/story-1", "Market story")
+    await cache.write_envelope(
+        f"{_META_PREFIX}{sample_id}",
+        payload={
+            "id": sample_id,
+            "title_zh": "美债收益率飙升拖累大盘",
+            "headline_en": "Treasury yields surge weighing on stocks",
+            "category_zh": "美股大盘",
+            "source": "CNBC",
+            "sources": ["CNBC", "Reuters"],
+            "source_count": 2,
+            "url": "https://www.cnbc.com/story-1",
+            "image_proxy_url": f"/api/market/discover/{sample_id}/image",
+            "published_at": datetime.now(timezone.utc).isoformat(),
+            "related_articles": [],
+        },
+        source="news_discover",
+        soft_ttl_seconds=600,
+        hard_ttl_seconds=3600,
+    )
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        u = str(req.url)
+        if "cnbc.com/story-1" in u:
+            html_doc = """
+            <html><body><div class="ArticleBody-articleBody">
+              <p>S&amp;P 500 declined two percent on Tuesday as bond yields surged higher across maturities.</p>
+              <p>Alphabet held steady while semiconductor equities faced broad institutional profit taking.</p>
+              <p>Traders are monitoring core PCE inflation metrics closely before the Federal Reserve decision.</p>
+            </div></body></html>
+            """
+            return httpx.Response(200, text=html_doc, headers={"content-type": "text/html"})
+        if "clients5.google.com/translate_a/t" in u:
+            qs = req.url.params.get_list("q")
+            if len(qs) == 1:
+                return httpx.Response(200, json=["字母表在人工智能收益下上涨"])
+            return httpx.Response(
+                200,
+                json=[
+                    "标准普尔 500 指数周二下跌 2%，各期限债券收益率飙升。",
+                    "字母表保持稳定，而半导体股票面临广泛的机构获利回吐。",
+                    "在美联储做决定前，交易员正密切关注核心个人消费支出通胀指标。",
+                ],
+            )
+        return httpx.Response(404)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        texts, ok = await translate_en_to_zh_free(
+            ["Alphabet rose on AI gains"], cache=None, http_client=client
+        )
+        assert ok is True
+        assert "Alphabet" in texts[0]
+        detail = await get_discover_article_detail(sample_id, cache, http_client=client)
+        assert detail is not None
+        assert detail["access_status"] == "full"
+        assert len(detail["paragraphs"]) == 3
+        assert "标普 500" in detail["paragraphs"][0]["zh"]
+        assert "Alphabet" in detail["paragraphs"][1]["zh"]
+        assert "PCE" in detail["paragraphs"][2]["zh"]
+        # Second read hits cache immediately
+        cached_detail = await get_discover_article_detail(sample_id, cache, http_client=client)
+        assert cached_detail is not None and cached_detail["cached"] is True
+
+
+async def test_verify_full_text_filters_paywall_and_short_stubs() -> None:
+    now_ts = int(time.time()) - 600
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        u = str(req.url)
+        if "finnhub.io/api/v1/news" in u:
+            return httpx.Response(
+                200,
+                json=[
+                    {
+                        "id": 10,
+                        "source": "CNBC",
+                        "datetime": now_ts,
+                        "headline": "Fed signals patience on interest rates amid S&P 500 volatility",
+                        "summary": "Rates focus.",
+                        "url": "https://www.cnbc.com/2026/11/22/open-full-article.html",
+                        "image": "https://image.cnbcfm.com/api/v1/image/1001.jpg",
+                    },
+                    {
+                        "id": 11,
+                        "source": "CNBC",
+                        "datetime": now_ts - 30,
+                        "headline": "Short stub article behind paywall on Nasdaq",
+                        "summary": "Stub.",
+                        "url": "https://www.cnbc.com/2026/11/22/short-stub.html",
+                        "image": "https://image.cnbcfm.com/api/v1/image/1002.jpg",
+                    },
+                ],
+            )
+        if "open-full-article.html" in u:
+            return httpx.Response(
+                200,
+                headers={"content-type": "text/html"},
+                text="""
+                <html><body><div class="ArticleBody-articleBody">
+                  <p>Stocks swung sharply on Monday as Federal Reserve policy expectations shifted across Wall Street trading desks.</p>
+                  <p>The S&amp;P 500 slipped early before stabilizing around key technical support levels highlighted by institutional strategists.</p>
+                  <p>Treasury yields remained elevated ahead of this week's core inflation and employment revisions.</p>
+                  <p>Semiconductor shares showed resilience late in the session even as broader growth names stayed under pressure.</p>
+                </div></body></html>
+                """,
+            )
+        if "short-stub.html" in u:
+            return httpx.Response(
+                200,
+                headers={"content-type": "text/html"},
+                text='<html><body><div class="ArticleBody-articleBody"><p>Create a free account to continue reading this exclusive article.</p></div></body></html>',
+            )
+        if "image.cnbcfm.com" in u:
+            return httpx.Response(200, content=b"imgbytes" * 300, headers={"content-type": "image/jpeg"})
+        return httpx.Response(200, json={})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        items = await fetch_discover_candidates(
+            Settings(_env_file=None, finnhub_api_key="test_fh"),
+            http_client=client,
+            verify_images=True,
+            verify_full_text=True,
+        )
+    assert len(items) == 1
+    assert "open-full-article.html" in items[0]["url"]
+    assert len(items[0]["pre_extracted_en"]) == 4
+    assert "&amp;" not in items[0]["pre_extracted_en"][1]
+
+
 

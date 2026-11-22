@@ -3,13 +3,14 @@
 import React, { useMemo, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import {
+  BookOpen,
   ChevronLeft,
   ChevronRight,
   Compass,
-  ExternalLink,
   RefreshCw,
 } from "lucide-react";
 import SpotlightBlock from "@/components/SpotlightBlock";
+import DiscoverArticleModal from "@/components/DiscoverArticleModal";
 import { DiscoverNewsItem, resolveApiUrl } from "@/lib/api";
 
 interface DiscoverNewsShelfProps {
@@ -70,6 +71,7 @@ export default function DiscoverNewsShelf({
   onRefresh,
 }: DiscoverNewsShelfProps) {
   const [page, setPage] = useState<number>(0);
+  const [activeArticle, setActiveArticle] = useState<DiscoverNewsItem | null>(null);
 
   const totalPages = Math.max(1, Math.ceil(items.length / PAGE_SIZE));
   const safePage = page % totalPages;
@@ -89,6 +91,7 @@ export default function DiscoverNewsShelf({
   };
 
   return (
+    <>
     <SpotlightBlock tone="gallery" className="p-4">
       {/* Header Row */}
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
@@ -100,7 +103,7 @@ export default function DiscoverNewsShelf({
             发现 · 全球市场重要资讯
           </h2>
           <span className="rounded-full border border-zinc-300/90 bg-white/90 px-2.5 py-0.5 font-mono text-[11px] font-semibold text-zinc-800 dark:border-white/20 dark:bg-white/[0.08] dark:text-zinc-100">
-            中文实时译制 · 高清图讯
+            零额度中文直译 · 站内速读
           </span>
         </div>
 
@@ -114,7 +117,7 @@ export default function DiscoverNewsShelf({
             type="button"
             onClick={onRefresh}
             disabled={loading}
-            title="刷新全球要闻并译制最新标题"
+            title="同步全站最新要闻（含 3 分钟防刷冷却）"
             className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-zinc-300 bg-white/90 text-zinc-900 transition hover:bg-zinc-100 disabled:opacity-50 dark:border-white/20 dark:bg-white/[0.08] dark:text-white dark:hover:bg-white/[0.15]"
           >
             <RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
@@ -162,19 +165,18 @@ export default function DiscoverNewsShelf({
                   : [item.source]
                 ).slice(0, 3);
                 return (
-                  <a
+                  <button
                     key={item.id}
-                    href={item.url}
-                    target="_blank"
-                    rel="noopener noreferrer"
+                    type="button"
+                    onClick={() => setActiveArticle(item)}
                     title={
                       item.summary_zh
-                        ? `${item.summary_zh}\n原文: ${item.headline_en}`
-                        : item.headline_en
+                        ? `${item.summary_zh}\n点击在站内阅读全文`
+                        : "点击在站内阅读全文"
                     }
-                    className="group flex flex-col justify-between overflow-hidden rounded-2xl border border-zinc-200/90 bg-white/90 p-2.5 shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:border-zinc-400 hover:shadow-md dark:border-white/15 dark:bg-white/[0.04] dark:hover:border-white/30 dark:hover:bg-white/[0.07]"
+                    className="group flex flex-col justify-between overflow-hidden rounded-2xl border border-zinc-200/90 bg-white/90 p-2.5 text-left shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:border-zinc-400 hover:shadow-md dark:border-white/15 dark:bg-white/[0.04] dark:hover:border-white/30 dark:hover:bg-white/[0.07]"
                   >
-                    <div>
+                    <div className="w-full">
                       <div className="relative h-[164px] w-full overflow-hidden rounded-xl bg-zinc-900">
                         {/* eslint-disable-next-line @next/next/no-img-element */}
                         <img
@@ -195,7 +197,7 @@ export default function DiscoverNewsShelf({
                       </h3>
                     </div>
 
-                    <div className="mt-2.5 flex items-center justify-between gap-2 px-0.5 pt-1">
+                    <div className="mt-2.5 flex w-full items-center justify-between gap-2 px-0.5 pt-1">
                       <div className="flex min-w-0 items-center gap-2">
                         <div className="flex shrink-0 -space-x-1.5">
                           {badges.map((srcName, bIdx) => {
@@ -220,10 +222,10 @@ export default function DiscoverNewsShelf({
 
                       <span className="flex shrink-0 items-center gap-1 font-mono text-[11px] font-medium text-zinc-700 dark:text-zinc-300">
                         <span>{formatRelativeZh(item.published_at)}</span>
-                        <ExternalLink className="h-3 w-3 opacity-60 transition-opacity group-hover:opacity-100" />
+                        <BookOpen className="h-3 w-3 opacity-65 transition-opacity group-hover:opacity-100" />
                       </span>
                     </div>
-                  </a>
+                  </button>
                 );
               })}
             </motion.div>
@@ -274,5 +276,10 @@ export default function DiscoverNewsShelf({
         </>
       )}
     </SpotlightBlock>
+    <DiscoverArticleModal
+      article={activeArticle}
+      onClose={() => setActiveArticle(null)}
+    />
+    </>
   );
 }

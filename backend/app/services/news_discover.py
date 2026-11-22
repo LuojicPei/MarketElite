@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import hashlib
+import html
 import json
 import logging
 import re
@@ -11,15 +13,18 @@ from typing import Any
 from urllib.parse import urlparse
 
 import httpx
+from bs4 import BeautifulSoup
 
 from app.core.config import Settings
-from app.services.llm_router import LLMUnconfiguredError, build_fast_llm
+from app.services.free_translate import translate_en_to_zh_free
 from app.services.resilience import DualTTLCache
 
 logger = logging.getLogger(__name__)
 
-DISCOVER_CACHE_KEY = "marketelite:news:discover:v1"
-_TR_CACHE_PREFIX = "marketelite:news:tr:"
+DISCOVER_CACHE_KEY = "marketelite:news:discover:v3"
+DISCOVER_COOLDOWN_KEY = "marketelite:news:discover:cooldown:v3"
+_META_PREFIX = "marketelite:news:meta:v3:"
+_ARTICLE_PREFIX = "marketelite:news:article:v3:"
 _IMG_URL_PREFIX = "marketelite:news:imgurl:"
 _IMG_BYTES_PREFIX = "marketelite:news:imgbytes:"
 
@@ -38,13 +43,52 @@ _LOGO_URL_BLOCKLIST = (
 _LIFESTYLE_NOISE_PATTERNS = (
     "american dream",
     "moved abroad",
-    "pizza chains",
     "first class is over",
     "retirement portfolio was so simple",
+    "rachel cruze",
     "save $",
     "zodiac",
     "horoscope",
     "recipe",
+)
+
+_BOILERPLATE_PREFIXES = (
+    "in this article",
+    "watch live",
+    "read more",
+    "sign up for",
+    "subscribe to",
+    "click here",
+    "follow ",
+    "disclosure:",
+    "copyright ",
+    "all rights reserved",
+    "terms of use",
+    "privacy policy",
+    "story continues",
+    "recommended stories",
+    "this article was originally",
+    "for more information",
+)
+
+_BLOCKED_CARD_URL_MARKERS = (
+    "/make-it/",
+    "/investingclub/",
+    "/pro/",
+    "finnhub.io/api/news",
+    "seekingalpha.com",
+    "benzinga.com",
+    "wsj.com",
+    "barrons.com",
+    "bloomberg.com",
+)
+
+_PAYWALL_MARKERS = (
+    "create a free account to continue",
+    "subscribe to unlock",
+    "already a subscriber? sign in",
+    "become a seeking alpha member",
+    "continue reading with a subscription",
 )
 
 _STOPWORDS = frozenset(
@@ -100,7 +144,7 @@ def is_editorial_photo_url(url: str | None) -> bool:
 
 
 def make_article_id(url: str, headline: str) -> str:
-    """Create a stable deterministic short ID for news deduplication and image proxying."""
+    """Create a stable deterministic short ID for news deduplication, reading modal, and image proxy."""
     digest = hashlib.sha256(f"{url.strip()}|{headline.strip()}".encode()).hexdigest()
     return f"disc_{digest[:16]}"
 
@@ -130,21 +174,25 @@ def _parse_iso_ts(raw_val: Any) -> datetime:
 def _infer_category_zh(headline: str) -> str:
     low = headline.lower()
     if any(k in low for k in ("fed", "rate", "yield", "treasury", "inflation", "cpi", "pce")):
-        return "美联储与利率"
-    if any(k in low for k in ("ai", "nvidia", "chip", "gpu", "semiconductor", "openai", "anthropic", "gemini", "apple")):
+        return "利率与政策"
+    if any(
+        k in low
+        for k in ("ai", "nvidia", "chip", "gpu", "semiconductor", "openai", "anthropic", "gemini", "apple")
+    ):
         return "科技与 AI"
     if any(k in low for k in ("oil", "iran", "opec", "saudi", "tariff", "trade", "china", "war")):
         return "地缘与能源"
     if any(k in low for k in ("s&p", "nasdaq", "dow", "wall street", "rally", "sell-off", "correction", "hedge fund")):
         return "美股大盘"
-    return "市场要闻"
+    return "宏观要闻"
 
 
 def _deterministic_importance_score(item: dict[str, Any], now_utc: datetime) -> float:
     low = item["headline"].lower()
+    link_low = item["url"].lower()
     score = 0.0
-    if any(p in low for p in _LIFESTYLE_NOISE_PATTERNS):
-        score -= 40.0
+    if "/make-it/" in link_low or any(p in low for p in _LIFESTYLE_NOISE_PATTERNS):
+        score -= 50.0
     boost_keywords = (
         "s&p",
         "nasdaq",
@@ -156,6 +204,7 @@ def _deterministic_importance_score(item: dict[str, Any], now_utc: datetime) -> 
         "yield",
         "inflation",
         "cpi",
+        "pce",
         "nvidia",
         "nvda",
         "ai",
@@ -181,12 +230,17 @@ def _deterministic_importance_score(item: dict[str, Any], now_utc: datetime) -> 
     for kw in boost_keywords:
         if kw in low:
             score += 6.0
-    # Favor multi-source corroborated stories & editorial CNBC/SeekingAlpha/Yahoo sources
+    # Reward genuine multi-outlet corroboration
     score += min(18.0, (item.get("source_count", 1) - 1) * 3.0)
+    link_low = item["url"].lower()
     src = str(item.get("source", "")).lower()
-    if "cnbc" in src or "bloomberg" in src or "barron" in src or "wsj" in src:
-        score += 5.0
-    # Slight recency bonus over 72h window
+    # Strongly prioritize open full-text URLs so in-app reading displays full multi-paragraph articles
+    if "cnbc.com/" in link_low or "finance.yahoo.com/" in link_low:
+        score += 18.0
+    elif "cnbc" in src or "yahoo" in src:
+        score += 12.0
+    if any(p in src for p in ("seekingalpha", "benzinga", "barron", "wsj")):
+        score -= 18.0
     try:
         pub = datetime.fromisoformat(str(item["published_at"]).replace("Z", "+00:00"))
         age_hours = max(0.0, (now_utc - pub).total_seconds() / 3600.0)
@@ -219,13 +273,56 @@ async def _verify_image_url(client: httpx.AsyncClient, url: str) -> bool:
         return False
 
 
+async def _scrape_article_html(client: httpx.AsyncClient, url: str) -> str:
+    try:
+        resp = await client.get(
+            url,
+            headers={
+                "User-Agent": (
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+                ),
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                "Accept-Language": "en-US,en;q=0.9",
+            },
+            timeout=7.0,
+        )
+        if resp.status_code == 200 and "text/html" in resp.headers.get("content-type", "").lower():
+            return resp.text
+    except (httpx.HTTPError, OSError):
+        return ""
+    return ""
+
+
+async def _verify_candidate_media_and_text(
+    client: httpx.AsyncClient,
+    item: dict[str, Any],
+    *,
+    verify_images: bool,
+    verify_full_text: bool,
+) -> tuple[bool, list[str]]:
+    img_task = _verify_image_url(client, item["image_url"]) if verify_images else asyncio.sleep(0, result=True)
+    if verify_full_text:
+        html_task = _scrape_article_html(client, item["url"])
+        img_ok, raw_html = await asyncio.gather(img_task, html_task, return_exceptions=True)
+        if img_ok is not True or not isinstance(raw_html, str) or not raw_html:
+            return False, []
+        paras, paywall = extract_article_paragraphs(raw_html)
+        if paywall or len(paras) < 4:
+            return False, []
+        return True, paras
+    img_ok = await img_task
+    return bool(img_ok is True), []
+
+
 async def fetch_discover_candidates(
     settings: Settings,
     *,
     http_client: httpx.AsyncClient | None = None,
     verify_images: bool = True,
+    verify_full_text: bool = False,
 ) -> list[dict[str, Any]]:
-    """Aggregate real-time market news across Finnhub & Yahoo Search with verified HD photos."""
+    """Aggregate real-time market news across Finnhub & Yahoo Search with verified HD photos and full-text articles."""
     api_key = settings.finnhub_api_key.strip()
     today = date.today()
     from_day = (today - timedelta(days=3)).isoformat()
@@ -255,26 +352,31 @@ async def fetch_discover_candidates(
                         ),
                     )
                 )
-        for q in ("stock market", "Federal Reserve", "Nvidia"):
+        for q in (
+            "stock market",
+            "S&P 500 Nasdaq",
+            "Federal Reserve",
+            "Nvidia",
+            "Wall Street stocks",
+            "artificial intelligence",
+            "interest rates",
+            "oil prices",
+        ):
             tasks.append(
                 (
                     f"yf_{q}",
                     client.get(
                         "https://query1.finance.yahoo.com/v1/finance/search",
-                        params={"q": q, "newsCount": 10},
+                        params={"q": q, "newsCount": 12},
                         headers={"User-Agent": "Mozilla/5.0"},
                         timeout=12.0,
                     ),
                 )
             )
 
-        raw_responses = await asyncio.gather(
-            *(t[1] for t in tasks), return_exceptions=True
-        )
+        raw_responses = await asyncio.gather(*(t[1] for t in tasks), return_exceptions=True)
 
-        # Collect ALL headlines (even logo-only Reuters/Bloomberg ones) to compute grounded topic corroboration,
-        # while collecting photo candidates only from items with real non-logo editorial images.
-        all_corpus: list[tuple[str, set[str]]] = []
+        all_corpus: list[dict[str, Any]] = []
         photo_candidates: list[dict[str, Any]] = []
         seen_urls_or_titles: set[str] = set()
 
@@ -287,14 +389,28 @@ async def fetch_discover_candidates(
             published_at: datetime,
             summary: str = "",
         ) -> None:
-            hl = " ".join(str(headline or "").split())
+            hl = " ".join(html.unescape(str(headline or "")).split())
             link = str(url or "").strip()
             src = str(source or "Market Wire").strip() or "Market Wire"
             if not hl or not link:
                 return
+            pub_iso = published_at.astimezone(timezone.utc).isoformat()
             toks = _extract_topic_tokens(hl)
             if toks:
-                all_corpus.append((src, toks))
+                all_corpus.append(
+                    {
+                        "source": src,
+                        "headline": hl,
+                        "url": link,
+                        "published_at": pub_iso,
+                        "tokens": toks,
+                    }
+                )
+            link_low = link.lower()
+            if any(m in link_low for m in _BLOCKED_CARD_URL_MARKERS) or any(
+                p in hl.lower() for p in _LIFESTYLE_NOISE_PATTERNS
+            ):
+                return
             if not is_editorial_photo_url(image_url):
                 return
             dedup_key = hl[:64].lower()
@@ -306,11 +422,11 @@ async def fetch_discover_candidates(
                 {
                     "id": make_article_id(link, hl),
                     "headline": hl,
-                    "summary": " ".join(str(summary or "").split())[:280],
+                    "summary": " ".join(html.unescape(str(summary or "")).split())[:500],
                     "source": src,
                     "url": link,
                     "image_url": str(image_url).strip(),
-                    "published_at": published_at.astimezone(timezone.utc).isoformat(),
+                    "published_at": pub_iso,
                     "_tokens": toks,
                 }
             )
@@ -344,7 +460,6 @@ async def fetch_discover_candidates(
                     resolutions = (row.get("thumbnail") or {}).get("resolutions") or []
                     chosen_img: str | None = None
                     if isinstance(resolutions, list):
-                        # Pick crisp HD resolution (>= 480px wide, avoid 140x140 tiny thumbs)
                         ordered = sorted(
                             [r for r in resolutions if isinstance(r, dict) and r.get("url")],
                             key=lambda r: int(r.get("width") or 0),
@@ -365,123 +480,76 @@ async def fetch_discover_candidates(
                         published_at=_parse_iso_ts(row.get("providerPublishTime")),
                     )
 
-        # Compute grounded source corroboration count from actual retrieved wires
         now_utc = datetime.now(timezone.utc)
         for item in photo_candidates:
             toks: set[str] = item.pop("_tokens", set())
             matched_sources: list[str] = [item["source"]]
+            related_articles: list[dict[str, str]] = []
             seen_src = {item["source"].lower()}
             if len(toks) >= 2:
-                for other_src, other_toks in all_corpus:
-                    if other_src.lower() in seen_src:
+                for other in all_corpus:
+                    other_src = other["source"]
+                    if other["url"] == item["url"] or other_src.lower() in seen_src:
                         continue
-                    if len(toks & other_toks) >= 2:
+                    if len(toks & other["tokens"]) >= 2:
                         seen_src.add(other_src.lower())
                         matched_sources.append(other_src)
+                        if len(related_articles) < 4:
+                            related_articles.append(
+                                {
+                                    "source": other_src,
+                                    "headline": other["headline"],
+                                    "url": other["url"],
+                                    "published_at": other["published_at"],
+                                }
+                            )
                         if len(matched_sources) >= 6:
                             break
             item["sources"] = matched_sources
             item["source_count"] = len(matched_sources)
+            item["related_articles"] = related_articles
             item["_score"] = _deterministic_importance_score(item, now_utc)
 
         photo_candidates.sort(
             key=lambda x: (x["_score"], x["published_at"]),
             reverse=True,
         )
-        top_pool = photo_candidates[:24]
+        top_pool = photo_candidates[:32]
         for x in top_pool:
             x.pop("_score", None)
 
-        if verify_images and top_pool:
+        if (verify_images or verify_full_text) and top_pool:
             checks = await asyncio.gather(
-                *(_verify_image_url(client, item["image_url"]) for item in top_pool),
+                *(
+                    _verify_candidate_media_and_text(
+                        client,
+                        item,
+                        verify_images=verify_images,
+                        verify_full_text=verify_full_text,
+                    )
+                    for item in top_pool
+                ),
                 return_exceptions=True,
             )
-            verified = [
-                item
-                for item, ok in zip(top_pool, checks, strict=False)
-                if ok is True
-            ]
-            # Keep verified items first; only keep unverified if fewer than 6 passed (avoids empty shelf in restricted networks)
+            verified: list[dict[str, Any]] = []
+            for item, res in zip(top_pool, checks, strict=False):
+                if isinstance(res, BaseException):
+                    continue
+                ok, paras = res
+                if ok:
+                    if paras:
+                        item["pre_extracted_en"] = paras
+                    verified.append(item)
+            if verify_full_text and verified:
+                return verified[:18]
             if len(verified) >= 6:
-                return verified[:20]
-        return top_pool[:20]
+                return verified[:18]
+        return top_pool[:18]
 
     if http_client is not None:
         return await _run(http_client)
     async with httpx.AsyncClient(follow_redirects=True) as client:
         return await _run(client)
-
-
-def _strip_json_fences(raw_text: str) -> str:
-    txt = raw_text.strip()
-    if txt.startswith("```"):
-        txt = re.sub(r"^```(?:json)?\s*", "", txt, flags=re.IGNORECASE)
-        txt = re.sub(r"\s*```$", "", txt)
-    return txt.strip()
-
-
-async def _translate_and_rank_with_llm(
-    candidates: list[dict[str, Any]],
-    settings: Settings,
-    *,
-    limit: int,
-) -> list[dict[str, Any]]:
-    """Use Fast Tier LLM to select market-critical news and translate headlines into crisp Chinese."""
-    if not candidates:
-        return []
-    llm = build_fast_llm(settings, temperature=0.1)
-    compact_input = [
-        {
-            "id": item["id"],
-            "source": item["source"],
-            "headline": item["headline"],
-            "summary": item.get("summary", "")[:140],
-        }
-        for item in candidates[:20]
-    ]
-    prompt = (
-        f"你是资深美股财经编辑。请从以下候选全球资讯中挑选最具市场影响力的 {min(limit, len(compact_input))} 条新闻"
-        "（优先美股大盘、美联储利率、AI与半导体、核心个股财报、宏观地缘与大宗商品；剔除无关生活八卦/个人理财鸡汤）。\n"
-        "请为每条新闻输出：\n"
-        "- id: 原始 id（必须与输入完全一致）\n"
-        "- title_zh: 地道、凝练、专业的中文财经新闻标题（不超过28个汉字，保留 S&P 500、Nasdaq、AI、GPU、Fed、GLP-1、Nvidia、Alphabet 等专有名词或代码）\n"
-        "- category_zh: 简短中文分类（仅限：宏观要闻 / 美股大盘 / 科技与 AI / 地缘与能源 / 利率与政策 / 个股动向）\n"
-        "- summary_zh: 一句话中文提要（不超过45个汉字）\n\n"
-        "严格仅返回 JSON 数组，不要包含 Markdown 围栏或多余说明。\n"
-        + json.dumps(compact_input, ensure_ascii=False)
-    )
-    response = await llm.ainvoke(prompt)
-    raw = response.content if isinstance(response.content, str) else str(response.content)
-    parsed = json.loads(_strip_json_fences(raw))
-    if not isinstance(parsed, list):
-        raise TypeError("LLM discover output is not a JSON array")
-
-    by_id = {item["id"]: item for item in candidates}
-    selected: list[dict[str, Any]] = []
-    seen_ids: set[str] = set()
-    for row in parsed:
-        if not isinstance(row, dict):
-            continue
-        aid = str(row.get("id", "")).strip()
-        base = by_id.get(aid)
-        if not base or aid in seen_ids:
-            continue
-        title_zh = " ".join(str(row.get("title_zh", "")).split())
-        if not title_zh:
-            continue
-        seen_ids.add(aid)
-        selected.append(
-            {
-                **base,
-                "title_zh": title_zh,
-                "category_zh": str(row.get("category_zh") or _infer_category_zh(base["headline"])).strip(),
-                "summary_zh": " ".join(str(row.get("summary_zh", "")).split()),
-            }
-        )
-        if len(selected) >= limit:
-            break
-    return selected
 
 
 async def get_or_refresh_discover_news(
@@ -490,143 +558,165 @@ async def get_or_refresh_discover_news(
     *,
     limit: int = 12,
     force_refresh: bool = False,
+    bypass_cooldown: bool = False,
+    verify_full_text: bool | None = None,
     http_client: httpx.AsyncClient | None = None,
 ) -> dict[str, Any]:
-    """Return cached translated HD-image Discover news carousel items, refreshing safely in background TTL."""
-    if not force_refresh:
+    """Return cached zero-LLM Chinese Discover news items with cooldown guard against public spam."""
+    if not force_refresh or not bypass_cooldown:
         cached = await cache.read_envelope(DISCOVER_CACHE_KEY)
         if cached and isinstance(cached.get("payload"), dict):
             payload = cached["payload"]
             items = list(payload.get("items") or [])[:limit]
-            if items and not cached.get("is_stale"):
-                return {
-                    "status": "ok",
-                    "cache_source": "redis",
-                    "fetched_at": cached.get("fetched_at"),
-                    "translated": bool(payload.get("translated", True)),
-                    "count": len(items),
-                    "items": items,
-                }
-
-    candidates = await fetch_discover_candidates(settings, http_client=http_client)
-    curated: list[dict[str, Any]] = []
-    translated_flag = False
-
-    if candidates:
-        # Check per-article translation cache first
-        untranslated: list[dict[str, Any]] = []
-        pre_translated: dict[str, dict[str, str]] = {}
-        for item in candidates:
-            tr_env = await cache.read_envelope(f"{_TR_CACHE_PREFIX}{item['id']}")
-            if tr_env and isinstance(tr_env.get("payload"), dict) and tr_env["payload"].get("title_zh"):
-                pre_translated[item["id"]] = dict(tr_env["payload"])
-            else:
-                untranslated.append(item)
-
-        if len(pre_translated) >= limit and not force_refresh:
-            for item in candidates:
-                tr = pre_translated.get(item["id"])
-                if tr:
-                    curated.append({**item, **tr})
-                if len(curated) >= limit:
-                    break
-            translated_flag = True
-        else:
-            try:
-                curated = await _translate_and_rank_with_llm(
-                    candidates, settings, limit=limit
-                )
-                translated_flag = bool(curated)
-                for row in curated:
-                    await cache.write_envelope(
-                        f"{_TR_CACHE_PREFIX}{row['id']}",
-                        payload={
-                            "title_zh": row["title_zh"],
-                            "category_zh": row["category_zh"],
-                            "summary_zh": row.get("summary_zh", ""),
-                        },
-                        source="llm_fast_translate",
-                        soft_ttl_seconds=86400 * 7,
-                        hard_ttl_seconds=86400 * 14,
-                    )
-            except (
-                LLMUnconfiguredError,
-                httpx.HTTPError,
-                json.JSONDecodeError,
-                ValueError,
-                TypeError,
-                KeyError,
-                OSError,
-            ) as exc:
-                logger.warning("Discover headline LLM translation skipped (%s); using deterministic fallback", exc)
-                curated = []
-
-        # Deterministic backfill if LLM was unconfigured, failed, or returned fewer than requested
-        if len(curated) < min(limit, len(candidates)):
-            existing_ids = {c["id"] for c in curated}
-            for item in candidates:
-                if item["id"] in existing_ids:
-                    continue
-                tr = pre_translated.get(item["id"])
-                if tr:
-                    curated.append({**item, **tr})
-                    translated_flag = True
-                else:
-                    curated.append(
-                        {
-                            **item,
-                            "title_zh": item["headline"],
-                            "category_zh": _infer_category_zh(item["headline"]),
-                            "summary_zh": item.get("summary", ""),
+            if items:
+                if not force_refresh and not cached.get("is_stale"):
+                    return {
+                        "status": "ok",
+                        "cache_source": "redis",
+                        "fetched_at": cached.get("fetched_at"),
+                        "translated": bool(payload.get("translated", True)),
+                        "count": len(items),
+                        "items": items,
+                    }
+                if force_refresh and not bypass_cooldown:
+                    cooldown = await cache.read_envelope(DISCOVER_COOLDOWN_KEY)
+                    if cooldown and not cooldown.get("is_stale"):
+                        return {
+                            "status": "ok",
+                            "cache_source": "redis_cooldown",
+                            "fetched_at": cached.get("fetched_at"),
+                            "translated": bool(payload.get("translated", True)),
+                            "count": len(items),
+                            "items": items,
                         }
-                    )
-                if len(curated) >= limit:
-                    break
 
-    # Register safe server-side image proxy mapping and strip raw image_url leakage if desired
+    should_verify_full_text = (
+        verify_full_text if verify_full_text is not None else (http_client is None)
+    )
+    candidates = await fetch_discover_candidates(
+        settings,
+        http_client=http_client,
+        verify_full_text=should_verify_full_text,
+    )
+    selected = candidates[:limit]
+
+    # Collect all headlines, summaries, and related-article titles for zero-LLM batch translation
+    texts_to_translate: list[str] = []
+    offsets: list[tuple[int, int, list[tuple[int, int]]]] = []
+    for item in selected:
+        hl_idx = len(texts_to_translate)
+        texts_to_translate.append(item["headline"])
+        sum_idx = -1
+        if item.get("summary"):
+            sum_idx = len(texts_to_translate)
+            texts_to_translate.append(item["summary"])
+        rel_pairs: list[tuple[int, int]] = []
+        for r_idx, rel in enumerate(item.get("related_articles") or []):
+            rt_idx = len(texts_to_translate)
+            texts_to_translate.append(rel["headline"])
+            rel_pairs.append((r_idx, rt_idx))
+        offsets.append((hl_idx, sum_idx, rel_pairs))
+
+    translated_list, translated_flag = await translate_en_to_zh_free(
+        texts_to_translate,
+        cache=cache,
+        http_client=http_client,
+    )
+
     final_items: list[dict[str, Any]] = []
-    for item in curated[:limit]:
-        await cache.write_envelope(
-            f"{_IMG_URL_PREFIX}{item['id']}",
-            payload={"url": item["image_url"], "source": item["source"]},
-            source="news_discover",
-            soft_ttl_seconds=86400 * 3,
-            hard_ttl_seconds=86400 * 7,
+    meta_writes = []
+    for item, (hl_idx, sum_idx, rel_pairs) in zip(selected, offsets, strict=False):
+        title_zh = translated_list[hl_idx] if hl_idx < len(translated_list) else item["headline"]
+        summary_zh = (
+            translated_list[sum_idx]
+            if 0 <= sum_idx < len(translated_list)
+            else ""
         )
-        final_items.append(
-            {
-                "id": item["id"],
-                "title_zh": item["title_zh"],
-                "headline_en": item["headline"],
-                "summary_zh": item.get("summary_zh", ""),
-                "category_zh": item.get("category_zh") or _infer_category_zh(item["headline"]),
-                "source": item["source"],
-                "sources": item.get("sources") or [item["source"]],
-                "source_count": int(item.get("source_count") or 1),
-                "url": item["url"],
-                "image_proxy_url": f"/api/market/discover/{item['id']}/image",
-                "published_at": item["published_at"],
-            }
+        rel_items: list[dict[str, str]] = []
+        raw_rels = item.get("related_articles") or []
+        for r_idx, rt_idx in rel_pairs:
+            rel_raw = raw_rels[r_idx]
+            rel_items.append(
+                {
+                    "source": rel_raw["source"],
+                    "title_zh": translated_list[rt_idx] if rt_idx < len(translated_list) else rel_raw["headline"],
+                    "headline_en": rel_raw["headline"],
+                    "url": rel_raw["url"],
+                    "published_at": rel_raw["published_at"],
+                }
+            )
+
+        clean_item = {
+            "id": item["id"],
+            "title_zh": title_zh,
+            "headline_en": item["headline"],
+            "summary_zh": summary_zh,
+            "summary_en": item.get("summary", ""),
+            "category_zh": _infer_category_zh(item["headline"]),
+            "source": item["source"],
+            "sources": item.get("sources") or [item["source"]],
+            "source_count": int(item.get("source_count") or 1),
+            "url": item["url"],
+            "image_proxy_url": f"/api/market/discover/{item['id']}/image",
+            "published_at": item["published_at"],
+            "related_articles": rel_items,
+            "pre_extracted_en": item.get("pre_extracted_en") or [],
+        }
+        final_items.append(clean_item)
+
+        meta_writes.append(
+            cache.write_envelope(
+                f"{_IMG_URL_PREFIX}{item['id']}",
+                payload={"url": item["image_url"], "source": item["source"]},
+                source="news_discover",
+                soft_ttl_seconds=86400 * 3,
+                hard_ttl_seconds=86400 * 7,
+            )
         )
+        meta_writes.append(
+            cache.write_envelope(
+                f"{_META_PREFIX}{item['id']}",
+                payload=clean_item,
+                source="news_discover",
+                soft_ttl_seconds=86400 * 3,
+                hard_ttl_seconds=86400 * 7,
+            )
+        )
+
+    if meta_writes:
+        await asyncio.gather(*meta_writes, return_exceptions=True)
 
     if final_items:
-        await cache.write_envelope(
-            DISCOVER_CACHE_KEY,
-            payload={"items": final_items, "translated": translated_flag},
-            source="news_discover",
-            soft_ttl_seconds=1200,
-            hard_ttl_seconds=86400 * 2,
+        # Strip heavy/internal fields from public shelf response to keep homepage JSON slim
+        shelf_items = [
+            {k: v for k, v in it.items() if k not in {"summary_en", "pre_extracted_en"}}
+            for it in final_items
+        ]
+        await asyncio.gather(
+            cache.write_envelope(
+                DISCOVER_CACHE_KEY,
+                payload={"items": shelf_items, "translated": translated_flag},
+                source="news_discover_free",
+                soft_ttl_seconds=1800,
+                hard_ttl_seconds=86400 * 3,
+            ),
+            cache.write_envelope(
+                DISCOVER_COOLDOWN_KEY,
+                payload={"locked": True},
+                source="news_discover_cooldown",
+                soft_ttl_seconds=180,
+                hard_ttl_seconds=300,
+            ),
         )
         return {
             "status": "ok",
             "cache_source": "live",
             "fetched_at": datetime.now(timezone.utc).isoformat(),
             "translated": translated_flag,
-            "count": len(final_items),
-            "items": final_items,
+            "count": len(shelf_items),
+            "items": shelf_items,
         }
 
-    # Stale cache rescue if network completely offline
     stale_env = await cache.read_envelope(DISCOVER_CACHE_KEY)
     if stale_env and isinstance(stale_env.get("payload"), dict):
         items = list(stale_env["payload"].get("items") or [])[:limit]
@@ -647,6 +737,175 @@ async def get_or_refresh_discover_news(
         "count": 0,
         "items": [],
     }
+
+
+def _clean_paragraph_text(text: str) -> str:
+    return " ".join(html.unescape(str(text or "")).split())
+
+
+def extract_article_paragraphs(html_text: str) -> tuple[list[str], bool]:
+    """Extract readable article body paragraphs cleanly from CNBC/Yahoo/news HTML.
+
+    Returns (paragraphs, paywall_detected).
+    """
+    if not html_text:
+        return [], False
+    low_all = html_text.lower()
+    paywall = any(marker in low_all for marker in _PAYWALL_MARKERS)
+
+    soup = BeautifulSoup(html_text, "html.parser")
+    for junk in soup.select("script, style, nav, footer, aside, header, noscript, figure"):
+        junk.decompose()
+
+    selectors = (
+        "div.ArticleBody-articleBody p, div[data-module='ArticleBody'] p",
+        "div.caas-body p, div.atoms-wrapper p",
+        "div.article-body p, div.entry-content p, main article p, article p",
+    )
+    paras: list[str] = []
+    seen_low: set[str] = set()
+    for sel in selectors:
+        nodes = soup.select(sel)
+        for node in nodes:
+            txt = _clean_paragraph_text(node.get_text(" ", strip=True))
+            if len(txt) < 35:
+                continue
+            txt_low = txt.lower()
+            if any(txt_low.startswith(pref) for pref in _BOILERPLATE_PREFIXES):
+                continue
+            if txt_low in seen_low:
+                continue
+            seen_low.add(txt_low)
+            paras.append(txt)
+        if len(paras) >= 3:
+            break
+
+    # Fallback: parse Schema.org JSON-LD articleBody if DOM paragraphs missing
+    if len(paras) < 3:
+        raw_soup = BeautifulSoup(html_text, "html.parser")
+        for script in raw_soup.select('script[type="application/ld+json"]'):
+            try:
+                data = json.loads(script.get_text() or "{}")
+            except ValueError:
+                continue
+            blocks = data if isinstance(data, list) else [data]
+            for blk in blocks:
+                if not isinstance(blk, dict):
+                    continue
+                body = blk.get("articleBody")
+                if isinstance(body, str) and len(body.strip()) > 120:
+                    chunks = [
+                        _clean_paragraph_text(c)
+                        for c in re.split(r"(?:\n+|\.\s+(?=[A-Z]))", body)
+                        if len(_clean_paragraph_text(c)) >= 40
+                    ]
+                    if len(chunks) >= 2:
+                        paras = chunks
+                        break
+            if len(paras) >= 3:
+                break
+
+    return paras[:22], paywall
+
+
+async def get_discover_article_detail(
+    article_id: str,
+    cache: DualTTLCache,
+    *,
+    http_client: httpx.AsyncClient | None = None,
+) -> dict[str, Any] | None:
+    """Fetch, extract, and zero-LLM translate full article paragraphs (aligned EN/ZH) for the reading modal."""
+    art_cache_key = f"{_ARTICLE_PREFIX}{article_id}"
+    cached = await cache.read_envelope(art_cache_key)
+    if cached and isinstance(cached.get("payload"), dict) and not cached.get("is_stale"):
+        return {**cached["payload"], "cached": True}
+
+    meta_env = await cache.read_envelope(f"{_META_PREFIX}{article_id}")
+    meta: dict[str, Any] | None = (
+        dict(meta_env["payload"]) if meta_env and isinstance(meta_env.get("payload"), dict) else None
+    )
+    if meta is None:
+        shelf_env = await cache.read_envelope(DISCOVER_CACHE_KEY)
+        if shelf_env and isinstance(shelf_env.get("payload"), dict):
+            for candidate in shelf_env["payload"].get("items") or []:
+                if isinstance(candidate, dict) and candidate.get("id") == article_id:
+                    meta = dict(candidate)
+                    break
+    if meta is None:
+        return None
+
+    target_url = str(meta.get("url") or "").strip()
+    pre_extracted = [
+        _clean_paragraph_text(str(p))
+        for p in (meta.get("pre_extracted_en") or [])
+        if len(_clean_paragraph_text(str(p))) >= 30
+    ]
+    extracted_paras: list[str] = pre_extracted
+    paywall_hit = False
+
+    if len(extracted_paras) < 3 and target_url.startswith("http"):
+        if http_client is not None:
+            raw_html = await _scrape_article_html(http_client, target_url)
+        else:
+            async with httpx.AsyncClient(follow_redirects=True) as scrape_client:
+                raw_html = await _scrape_article_html(scrape_client, target_url)
+        extracted_paras, paywall_hit = extract_article_paragraphs(raw_html)
+
+    if len(extracted_paras) >= 3:
+        access_status = "full"
+        en_paras = extracted_paras
+    else:
+        access_status = "summary_only"
+        fallback_text = _clean_paragraph_text(str(meta.get("summary_en") or ""))
+        if not fallback_text or len(fallback_text) < 20:
+            fallback_text = _clean_paragraph_text(str(meta.get("headline_en") or ""))
+        en_paras = [fallback_text] if fallback_text else []
+        if paywall_hit and extracted_paras:
+            en_paras = extracted_paras[:2]
+
+    zh_paras, _ = await translate_en_to_zh_free(
+        en_paras,
+        cache=cache,
+        http_client=http_client,
+    )
+
+    aligned_paragraphs = [
+        {
+            "index": idx,
+            "en": en_p,
+            "zh": zh_p,
+        }
+        for idx, (en_p, zh_p) in enumerate(zip(en_paras, zh_paras, strict=False))
+    ]
+
+    result = {
+        "status": "ok",
+        "id": article_id,
+        "title_zh": meta.get("title_zh") or meta.get("headline_en"),
+        "headline_en": meta.get("headline_en", ""),
+        "category_zh": meta.get("category_zh", "宏观要闻"),
+        "source": meta.get("source", ""),
+        "sources": meta.get("sources") or [meta.get("source", "")],
+        "source_count": int(meta.get("source_count") or 1),
+        "url": target_url,
+        "image_proxy_url": meta.get("image_proxy_url") or f"/api/market/discover/{article_id}/image",
+        "published_at": meta.get("published_at", ""),
+        "access_status": access_status,
+        "paragraphs": aligned_paragraphs,
+        "related_articles": meta.get("related_articles") or [],
+        "cached": False,
+    }
+
+    if aligned_paragraphs:
+        await cache.write_envelope(
+            art_cache_key,
+            payload=result,
+            source="news_discover_article_free",
+            soft_ttl_seconds=86400 * 2,
+            hard_ttl_seconds=86400 * 7,
+        )
+
+    return result
 
 
 def fallback_editorial_svg(label: str = "MarketElite") -> bytes:
@@ -678,8 +937,6 @@ async def get_discover_article_image(
     http_client: httpx.AsyncClient | None = None,
 ) -> tuple[bytes, str]:
     """Fetch & Redis-cache verified news article photo bytes via opaque article_id (zero SSRF)."""
-    import base64
-
     bytes_key = f"{_IMG_BYTES_PREFIX}{article_id}"
     cached_bytes = await cache.read_envelope(bytes_key)
     if cached_bytes and isinstance(cached_bytes.get("payload"), dict):
