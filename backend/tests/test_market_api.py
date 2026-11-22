@@ -11,8 +11,16 @@ from typing_extensions import Self
 
 from app.core.config import Settings
 from app.main import create_app
+from app.services.news_discover import (
+    DISCOVER_CACHE_KEY,
+    fetch_discover_candidates,
+    get_discover_article_image,
+    is_editorial_photo_url,
+    make_article_id,
+)
 from app.services.pipeline import OVERVIEW_CACHE_KEY
 from app.services.providers.macro_feeds import MacroFeedsClient
+from app.services.resilience import DualTTLCache
 from tests.test_resilience import InMemoryFakeRedis
 
 
@@ -179,3 +187,143 @@ def test_pipeline_sync_requires_admin_token_when_configured_or_prod(monkeypatch)
 
         wrong = client.post("/api/pipeline/sync", headers={"X-Admin-Token": "wrong"})
         assert wrong.status_code == 403
+
+
+def test_is_editorial_photo_url_filters_logos_and_bad_schemes() -> None:
+    assert is_editorial_photo_url("https://image.cnbcfm.com/api/v1/image/10855.jpg")
+    assert is_editorial_photo_url("https://media.zenfs.com/en/24_7_wall_st/photo.jpg")
+    assert not is_editorial_photo_url("https://static2.finnhub.io/file/finnhub/logo/reuters_logo.jpeg")
+    assert not is_editorial_photo_url("https://data.bloomberglp.com/company/logobbg-wht.png")
+    assert not is_editorial_photo_url("https://s.yimg.com/rz/stage/p/yahoo_finance_en-US_h_p_finance_2.png")
+    assert not is_editorial_photo_url("javascript:alert(1)")
+    assert not is_editorial_photo_url("")
+
+
+async def test_fetch_discover_candidates_clusters_sources_and_filters_logos() -> None:
+    now_ts = int(time.time()) - 1800
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        url = str(req.url)
+        if "finnhub.io/api/v1/news" in url:
+            return httpx.Response(
+                200,
+                json=[
+                    {
+                        "id": 1,
+                        "source": "CNBC",
+                        "datetime": now_ts,
+                        "headline": "S&P 500 correction deepens as Treasury yields jump",
+                        "summary": "Equities slid amid sticky inflation data.",
+                        "url": "https://www.cnbc.com/sp500-correction",
+                        "image": "https://image.cnbcfm.com/api/v1/image/12345.jpg",
+                    },
+                    {
+                        "id": 2,
+                        "source": "Reuters",
+                        "datetime": now_ts - 60,
+                        "headline": "Treasury yields jump again weighing on S&P 500 index",
+                        "summary": "Bond traders repriced Fed cuts.",
+                        "url": "https://www.reuters.com/sp500-yields",
+                        "image": "https://static2.finnhub.io/file/finnhub/logo/reuters_logo.jpeg",
+                    },
+                    {
+                        "id": 3,
+                        "source": "CNBC",
+                        "datetime": now_ts - 120,
+                        "headline": "I never wanted the American Dream and moved abroad",
+                        "summary": "Lifestyle story.",
+                        "url": "https://www.cnbc.com/lifestyle",
+                        "image": "https://image.cnbcfm.com/api/v1/image/99999.jpg",
+                    },
+                ],
+            )
+        if "query1.finance.yahoo.com/v1/finance/search" in url:
+            return httpx.Response(
+                200,
+                json={
+                    "news": [
+                        {
+                            "title": "Nvidia chips demand stays strong despite volatility",
+                            "publisher": "Barron's",
+                            "link": "https://www.barrons.com/nvda-chips",
+                            "providerPublishTime": now_ts - 300,
+                            "thumbnail": {
+                                "resolutions": [
+                                    {"width": 140, "url": "https://media.zenfs.com/small.jpg"},
+                                    {"width": 1000, "url": "https://media.zenfs.com/hd-nvda.jpg"},
+                                ]
+                            },
+                        }
+                    ]
+                },
+            )
+        if "image.cnbcfm.com" in url or "media.zenfs.com" in url:
+            return httpx.Response(200, content=b"x" * 2048, headers={"content-type": "image/jpeg"})
+        return httpx.Response(200, json=[])
+
+    transport = httpx.MockTransport(handler)
+    async with httpx.AsyncClient(transport=transport) as client:
+        items = await fetch_discover_candidates(
+            Settings(_env_file=None, finnhub_api_key="test_fh"),
+            http_client=client,
+            verify_images=True,
+        )
+    assert len(items) >= 2
+    assert items[0]["source"] in {"CNBC", "Barron's"}
+    # Lifestyle clickbait must rank below market-moving S&P 500 and Nvidia stories
+    assert "American Dream" not in items[0]["headline"]
+    sp_item = next(x for x in items if "S&P 500" in x["headline"])
+    assert sp_item["source_count"] >= 2
+    assert "Reuters" in sp_item["sources"]
+    nvda_item = next(x for x in items if "Nvidia" in x["headline"])
+    assert nvda_item["image_url"] == "https://media.zenfs.com/hd-nvda.jpg"
+
+
+async def test_discover_endpoint_and_image_proxy(monkeypatch) -> None:
+    app = create_app()
+    fake_redis = InMemoryFakeRedis()
+    cache = DualTTLCache(fake_redis)
+
+    sample_id = make_article_id("https://cnbc.com/sp500", "S&P 500 rally")
+    await cache.write_envelope(
+        DISCOVER_CACHE_KEY,
+        payload={
+            "translated": True,
+            "items": [
+                {
+                    "id": sample_id,
+                    "title_zh": "标普 500 止跌企稳 科技股引领反弹",
+                    "headline_en": "S&P 500 rally",
+                    "summary_zh": "美股三大指数收涨。",
+                    "category_zh": "美股大盘",
+                    "source": "CNBC",
+                    "sources": ["CNBC", "Reuters"],
+                    "source_count": 2,
+                    "url": "https://cnbc.com/sp500",
+                    "image_proxy_url": f"/api/market/discover/{sample_id}/image",
+                    "published_at": datetime.now(timezone.utc).isoformat(),
+                }
+            ],
+        },
+        source="news_discover",
+        soft_ttl_seconds=600,
+        hard_ttl_seconds=3600,
+    )
+
+    with TestClient(app) as client:
+        app.state.infra = SimpleNamespace(redis=fake_redis)
+        resp = client.get("/api/market/discover?limit=12")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["status"] == "ok"
+        assert body["count"] == 1
+        assert body["items"][0]["title_zh"] == "标普 500 止跌企稳 科技股引领反弹"
+
+        bad_img = client.get("/api/market/discover/bad$id/image")
+        assert bad_img.status_code == 400
+
+    # Direct image helper fallback returns SVG cleanly when unmapped
+    raw, ctype = await get_discover_article_image("disc_missing1234", cache)
+    assert ctype == "image/svg+xml"
+    assert b"<svg" in raw
+

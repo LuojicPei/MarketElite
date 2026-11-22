@@ -21,6 +21,10 @@ from app.db.models import (
     UserWatchlistItem,
 )
 from app.quant.technicals import DailyBarInput, analyze_asset_technicals
+from app.services.news_discover import (
+    get_discover_article_image,
+    get_or_refresh_discover_news,
+)
 from app.services.pipeline import (
     OVERVIEW_CACHE_KEY,
     ensure_asset_persisted,
@@ -666,6 +670,40 @@ async def get_asset_logo(symbol: str, request: Request) -> Response:
     return Response(
         content=_brand_svg_badge(sym),
         media_type="image/svg+xml",
+        headers={"Cache-Control": "public, max-age=3600"},
+    )
+
+
+@router.get("/market/discover")
+async def get_market_discover_news(
+    request: Request,
+    limit: int = Query(default=12, ge=3, le=18),
+    force_refresh: bool = Query(default=False),
+) -> dict[str, Any]:
+    """Return latest high-impact financial news with verified HD editorial photos & Chinese headlines."""
+    settings = get_settings()
+    infra = request.app.state.infra
+    cache = DualTTLCache(infra.redis)
+    return await get_or_refresh_discover_news(
+        cache,
+        settings,
+        limit=limit,
+        force_refresh=force_refresh,
+    )
+
+
+@router.get("/market/discover/{article_id}/image")
+async def get_market_discover_image(article_id: str, request: Request) -> Response:
+    """Serve proxied & Redis-cached editorial HD photo by opaque article_id."""
+    cleaned = article_id.strip()
+    if not cleaned or len(cleaned) > 48 or not all(ch.isalnum() or ch in "_-" for ch in cleaned):
+        raise HTTPException(status_code=400, detail="Invalid article_id")
+    infra = request.app.state.infra
+    cache = DualTTLCache(infra.redis)
+    raw, ctype = await get_discover_article_image(cleaned, cache)
+    return Response(
+        content=raw,
+        media_type=ctype,
         headers={"Cache-Control": "public, max-age=3600"},
     )
 

@@ -21,11 +21,13 @@ import { useTheme } from "@/components/ThemeProvider";
 import {
   AssetDetailResponse,
   DashboardOverviewResponse,
+  DiscoverNewsItem,
   RegimeHistoryPoint,
   WatchlistAssetItem,
   ensureAsset,
   fetchAssetDetail,
   fetchDashboardOverview,
+  fetchDiscoverNews,
   fetchRegimeHistory,
   fetchWatchdogAlerts,
   fetchWatchlist,
@@ -72,11 +74,27 @@ export default function MarketCockpit({
 
   const [assetDetail, setAssetDetail] = useState<AssetDetailResponse | null>(null);
   const [gexSymbol, setGexSymbol] = useState<"SPY" | "QQQ">("SPY");
+  const [discoverNews, setDiscoverNews] = useState<DiscoverNewsItem[]>([]);
+  const [discoverLoading, setDiscoverLoading] = useState<boolean>(true);
+  const [discoverError, setDiscoverError] = useState<string | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [assetLoading, setAssetLoading] = useState<boolean>(false);
   const [syncing, setSyncing] = useState<boolean>(false);
   const [drawerOpen, setDrawerOpen] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
+
+  const loadDiscoverNewsData = useCallback(async (forceRefresh = false) => {
+    setDiscoverLoading(true);
+    try {
+      const res = await fetchDiscoverNews(12, forceRefresh);
+      setDiscoverNews(res.items);
+      setDiscoverError(null);
+    } catch (err) {
+      setDiscoverError(err instanceof Error ? err.message : "无法获取市场要闻");
+    } finally {
+      setDiscoverLoading(false);
+    }
+  }, []);
 
   const loadWatchlistData = useCallback(async () => {
     setWatchlistLoading(true);
@@ -213,7 +231,8 @@ export default function MarketCockpit({
   useEffect(() => {
     loadOverviewAndAssets();
     loadWatchlistData();
-  }, [loadOverviewAndAssets, loadWatchlistData]);
+    loadDiscoverNewsData(false);
+  }, [loadOverviewAndAssets, loadWatchlistData, loadDiscoverNewsData]);
 
   useEffect(() => {
     if (viewMode === "cockpit") {
@@ -227,6 +246,7 @@ export default function MarketCockpit({
       await triggerPipelineSync(false);
       await loadOverviewAndAssets();
       await loadAsset(selectedSymbol);
+      await loadDiscoverNewsData(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Sync failed");
     } finally {
@@ -544,6 +564,10 @@ export default function MarketCockpit({
               onAddWatchlist={handleAddWatchlistSymbol}
               onReorderWatchlist={handlePersistWatchlist}
               onRemoveWatchlist={handleRemoveWatchlistSymbol}
+              discoverNews={discoverNews}
+              discoverLoading={discoverLoading}
+              discoverError={discoverError}
+              onRefreshDiscover={() => void loadDiscoverNewsData(true)}
               onOpenStockDetail={(sym) => navigateView("stock", sym)}
               onOpenMyWatchlist={() => navigateView("watchlist")}
               onOpenAiDrawer={() => setDrawerOpen(true)}

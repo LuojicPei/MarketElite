@@ -71,7 +71,7 @@ export default function WatchlistCardPanel({
   };
 
   return (
-    <SpotlightBlock tone="gallery" className="flex flex-col justify-between p-4">
+    <SpotlightBlock tone="gallery" className="flex h-full flex-col justify-between p-4">
       <div className="space-y-3">
         {/* Header Row */}
         <div className="flex flex-wrap items-center justify-between gap-2">
@@ -133,7 +133,7 @@ export default function WatchlistCardPanel({
         )}
 
         {/* Dense Watchlist Rows */}
-        <div className="max-h-[430px] divide-y divide-zinc-200/85 overflow-y-auto overflow-x-hidden rounded-xl border border-zinc-200/90 bg-white/80 dark:divide-white/[0.08] dark:border-white/15 dark:bg-white/[0.04]">
+        <div className="max-h-[385px] divide-y divide-zinc-200/85 overflow-y-auto overflow-x-hidden rounded-xl border border-zinc-200/90 bg-white/80 dark:divide-white/[0.08] dark:border-white/15 dark:bg-white/[0.04]">
           {loading && items.length === 0 ? (
             <div className="p-4 text-center font-mono text-xs text-zinc-700 dark:text-zinc-300">
               正在加载关注列表...

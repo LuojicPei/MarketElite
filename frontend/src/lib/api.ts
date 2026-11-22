@@ -383,9 +383,56 @@ export interface MacroTapeResponse {
   items: MacroTapeItem[];
 }
 
+export interface DiscoverNewsItem {
+  id: string;
+  title_zh: string;
+  headline_en: string;
+  summary_zh?: string;
+  category_zh: string;
+  source: string;
+  sources: string[];
+  source_count: number;
+  url: string;
+  image_proxy_url: string;
+  published_at: string;
+}
+
+export interface DiscoverNewsResponse {
+  status: string;
+  cache_source: string;
+  fetched_at?: string | null;
+  translated: boolean;
+  count: number;
+  items: DiscoverNewsItem[];
+}
+
 const _RAW_API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL;
 const API_BASE =
   _RAW_API_BASE !== undefined ? _RAW_API_BASE.replace(/\/$/, "") : "http://localhost:8100";
+
+export function resolveApiUrl(path: string): string {
+  if (!path) return "";
+  if (path.startsWith("http://") || path.startsWith("https://")) return path;
+  const normalized = path.startsWith("/") ? path : `/${path}`;
+  return `${API_BASE}${normalized}`;
+}
+
+export async function fetchDiscoverNews(
+  limit = 12,
+  forceRefresh = false
+): Promise<DiscoverNewsResponse> {
+  const params = new URLSearchParams({
+    limit: String(limit),
+    force_refresh: forceRefresh ? "true" : "false",
+  });
+  const res = await fetch(`${API_BASE}/api/market/discover?${params.toString()}`, {
+    cache: "no-store",
+  });
+  if (!res.ok) {
+    throw new Error(`Discover news failed (${res.status})`);
+  }
+  return res.json();
+}
 
 export async function fetchHealth(): Promise<HealthResponse> {
   const res = await fetch(`${API_BASE}/health`, { cache: "no-store" });

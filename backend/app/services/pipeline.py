@@ -37,6 +37,7 @@ from app.quant.technicals import (
     compute_market_breadth,
     compute_sector_rotation,
 )
+from app.services.news_discover import get_or_refresh_discover_news
 from app.services.providers.alpaca import (
     CORE_INDEX_ETFS,
     DEFAULT_EQUITY_UNIVERSE,
@@ -826,6 +827,18 @@ async def run_full_pipeline_sync(
     overview = await build_and_persist_overview(
         session_factory, redis_client, settings, provider_states=states
     )
+    try:
+        discover_res = await get_or_refresh_discover_news(
+            _make_cache(redis_client),
+            settings,
+            limit=12,
+            force_refresh=force_refresh,
+        )
+        states["discover_news"] = f"ok:{discover_res.get('count', 0)}"
+    except (httpx.HTTPError, ValueError, TypeError, OSError) as exc:  # pragma: no cover - best-effort news warmup
+        logger.warning("Discover news warmup skipped: %s", exc)
+        states["discover_news"] = "skipped"
+
     return {
         "states": states,
         "details": {
