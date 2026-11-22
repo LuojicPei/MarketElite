@@ -403,3 +403,20 @@ class EpisodicMemory(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=utc_now
     )
+
+
+class UserWatchlistItem(Base):
+    """Persistent ordered watchlist items customizable from Homepage & My Watchlist."""
+
+    __tablename__ = "user_watchlist_items"
+    __table_args__ = (
+        UniqueConstraint("symbol", name="uq_user_watchlist_symbol"),
+        Index("ix_user_watchlist_sort_order", "sort_order"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    symbol: Mapped[str] = mapped_column(String(24), nullable=False)
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
+    )

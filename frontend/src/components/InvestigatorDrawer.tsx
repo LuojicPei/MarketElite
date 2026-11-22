@@ -262,8 +262,8 @@ export default function InvestigatorDrawer({
       )}
 
       {/* One-Click Chinese Research Prompt Chips */}
-      <div className="flex flex-wrap items-center gap-1.5">
-        <span className="font-mono text-[10px] uppercase tracking-wider text-zinc-500">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="font-mono text-xs font-semibold uppercase tracking-wider text-zinc-200">
           快捷投研指令:
         </span>
         {QUICK_PROMPTS.map((chip) => {
@@ -278,7 +278,7 @@ export default function InvestigatorDrawer({
                 setQueryInput(promptText);
                 void executeAgentQuery(promptText, sym);
               }}
-              className="rounded-full border border-zinc-700 bg-zinc-900/90 px-2.5 py-1 font-mono text-[10px] text-zinc-200 transition hover:border-zinc-400 hover:bg-zinc-800 disabled:opacity-50"
+              className="rounded-full border border-zinc-600 bg-zinc-900 px-3 py-1 font-mono text-xs font-medium text-zinc-100 transition hover:border-white hover:bg-zinc-800 disabled:opacity-50"
             >
               {chip.label}
             </button>
@@ -287,14 +287,14 @@ export default function InvestigatorDrawer({
       </div>
 
       {/* Chat Thread History + Streaming Output */}
-      <div className="min-h-[260px] flex-1 space-y-3 overflow-y-auto rounded-2xl border border-zinc-800 bg-zinc-950/70 p-4">
+      <div className="min-h-[260px] flex-1 space-y-3 overflow-y-auto rounded-2xl border border-zinc-800 bg-zinc-950/75 p-4">
         {turns.length === 0 && !answer && !runningAgent && (
-          <div className="flex h-48 flex-col items-center justify-center text-center text-xs text-zinc-400">
-            <Bot className="mb-2 h-6 w-6 text-zinc-500" />
-            <p className="font-medium text-zinc-200">
+          <div className="flex h-48 flex-col items-center justify-center text-center text-sm text-zinc-200">
+            <Bot className="mb-2 h-6 w-6 text-emerald-400" />
+            <p className="font-semibold text-white">
               Investigator 已加载 {symbolInput || defaultSymbol} 实时结构上下文
             </p>
-            <p className="mt-1 max-w-md text-[11px] text-zinc-500">
+            <p className="mt-1 max-w-md text-xs text-zinc-300">
               可点击上方快捷指令或输入自定义问题。若检测到买入/卖出意图，将自动把论据预填至右侧 Risk Critic 独立风控面板。
             </p>
           </div>
@@ -304,8 +304,8 @@ export default function InvestigatorDrawer({
         {(runningAgent || !answer ? turns : turns.slice(0, -2)).map((t, idx) =>
           t.role === "user" ? (
             <div key={`turn-${idx}`} className="flex justify-end">
-              <div className="max-w-[85%] rounded-2xl rounded-tr-sm bg-[#F3F3F0] px-4 py-2.5 text-xs leading-relaxed text-[#0B0B0D] shadow-sm">
-                <span className="mb-0.5 block font-mono text-[9px] font-semibold uppercase tracking-wider text-zinc-500">
+              <div className="max-w-[85%] rounded-2xl rounded-tr-sm bg-[#F3F3F0] px-4 py-2.5 text-sm leading-relaxed text-[#0B0B0D] shadow-sm">
+                <span className="mb-0.5 block font-mono text-xs font-semibold uppercase tracking-wider text-zinc-700">
                   研究员提问 · YOU
                 </span>
                 {t.content}
@@ -314,9 +314,9 @@ export default function InvestigatorDrawer({
           ) : (
             <div
               key={`turn-${idx}`}
-              className="rounded-2xl rounded-tl-sm border border-zinc-200 bg-white/95 p-4 text-zinc-950 shadow-sm backdrop-blur-md dark:border-white/15 dark:bg-white/[0.06] dark:text-zinc-100"
+              className="rounded-2xl rounded-tl-sm border border-zinc-200 bg-white/95 p-4 text-zinc-950 shadow-sm dark:border-white/15 dark:bg-white/[0.06] dark:text-zinc-100"
             >
-              <div className="mb-2 flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
+              <div className="mb-2 flex items-center gap-1.5 font-mono text-xs font-semibold uppercase tracking-wider text-zinc-700 dark:text-zinc-200">
                 <ShieldCheck className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" />
                 Investigator 历史回复
               </div>
@@ -328,8 +328,8 @@ export default function InvestigatorDrawer({
         {/* Active streaming turn prompt bubble when answer streaming starts */}
         {(runningAgent || answer) && turns.length >= 2 && !runningAgent && (
           <div className="flex justify-end">
-            <div className="max-w-[85%] rounded-2xl rounded-tr-sm bg-[#F3F3F0] px-4 py-2.5 text-xs leading-relaxed text-[#0B0B0D] shadow-sm">
-              <span className="mb-0.5 block font-mono text-[9px] font-semibold uppercase tracking-wider text-zinc-500">
+            <div className="max-w-[85%] rounded-2xl rounded-tr-sm bg-[#F3F3F0] px-4 py-2.5 text-sm leading-relaxed text-[#0B0B0D] shadow-sm">
+              <span className="mb-0.5 block font-mono text-xs font-semibold uppercase tracking-wider text-zinc-700">
                 研究员提问 · YOU
               </span>
               {turns[turns.length - 2]?.content}
@@ -338,7 +338,7 @@ export default function InvestigatorDrawer({
         )}
 
         {nodeStatus && (
-          <div className="flex items-center gap-2 rounded-lg border border-zinc-800 bg-zinc-900/80 px-3 py-2 font-mono text-[11px] text-zinc-300">
+          <div className="flex items-center gap-2 rounded-lg border border-zinc-800 bg-zinc-900/90 px-3 py-2 font-mono text-xs text-zinc-100">
             <Terminal className="h-3.5 w-3.5 shrink-0 text-emerald-400" />
             <span>{nodeStatus}</span>
           </div>
@@ -346,26 +346,26 @@ export default function InvestigatorDrawer({
 
         {toolTraces.length > 0 && (
           <div className="space-y-1.5">
-            <div className="font-mono text-[10px] uppercase tracking-wider text-zinc-500">
+            <div className="font-mono text-xs font-semibold uppercase tracking-wider text-zinc-200">
               FastMCP 工具调用链路 ({toolTraces.length})
             </div>
             <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
               {toolTraces.map((tr, idx) => (
                 <div
                   key={`${tr.tool}-${idx}`}
-                  className="rounded-lg border border-zinc-800 bg-zinc-900/70 px-3 py-2 font-mono text-[11px]"
+                  className="rounded-lg border border-zinc-800 bg-zinc-900/80 px-3 py-2 font-mono text-xs"
                 >
                   <div className="flex items-center justify-between gap-2">
-                    <span className="flex items-center gap-1.5 truncate font-semibold text-zinc-200">
-                      <CheckCircle2 className="h-3 w-3 shrink-0 text-emerald-400" />
+                    <span className="flex items-center gap-1.5 truncate font-semibold text-zinc-100">
+                      <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-emerald-400" />
                       {tr.tool}
                     </span>
-                    <span className="shrink-0 text-[10px] text-zinc-500">
+                    <span className="shrink-0 text-xs text-zinc-300">
                       {tr.latency_ms !== undefined ? `${tr.latency_ms}ms` : tr.status}
                     </span>
                   </div>
                   {tr.preview && (
-                    <p className="mt-1 truncate text-[10px] text-zinc-400">{tr.preview}</p>
+                    <p className="mt-1 truncate text-xs text-zinc-200">{tr.preview}</p>
                   )}
                 </div>
               ))}
@@ -374,14 +374,14 @@ export default function InvestigatorDrawer({
         )}
 
         {agentError && (
-          <div className="rounded-xl border border-rose-500/40 bg-rose-500/10 px-4 py-3 font-mono text-xs text-rose-200">
+          <div className="rounded-xl border border-rose-500/40 bg-rose-500/15 px-4 py-3 font-mono text-xs text-rose-200">
             {agentError}
           </div>
         )}
 
         {answer && (
-          <div className="rounded-2xl border border-zinc-200 bg-white/95 p-5 text-zinc-950 shadow-sm backdrop-blur-md dark:border-white/15 dark:bg-white/[0.06] dark:text-zinc-100">
-            <div className="mb-3 flex flex-wrap items-center justify-between gap-2 border-b border-zinc-100 pb-2 font-mono text-[10px] uppercase tracking-wider text-zinc-500 dark:border-white/10 dark:text-zinc-400">
+          <div className="rounded-2xl border border-zinc-200 bg-white/95 p-5 text-zinc-950 shadow-sm dark:border-white/15 dark:bg-white/[0.06] dark:text-zinc-100">
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-2 border-b border-zinc-200 pb-2 font-mono text-xs font-semibold uppercase tracking-wider text-zinc-700 dark:border-white/10 dark:text-zinc-200">
               <span className="flex items-center gap-1.5">
                 <ShieldCheck className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" />
                 Investigator 结构化投研结论 (Read-Only Grounded)
@@ -401,7 +401,7 @@ export default function InvestigatorDrawer({
                     setDrawerTab("risk");
                   }
                 }}
-                className={`inline-flex items-center gap-1 rounded-full px-3 py-1 font-mono text-[10px] font-semibold transition ${
+                className={`inline-flex items-center gap-1 rounded-full px-3 py-1 font-mono text-xs font-semibold transition ${
                   tradeIntent?.detected
                     ? "bg-zinc-950 text-white hover:bg-zinc-800 dark:bg-white dark:text-zinc-950 dark:hover:bg-zinc-200"
                     : "border border-zinc-300 bg-zinc-100 text-zinc-900 hover:bg-zinc-200 dark:border-white/20 dark:bg-white/10 dark:text-white dark:hover:bg-white/20"

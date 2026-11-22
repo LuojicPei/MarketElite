@@ -183,13 +183,13 @@ export function PortfolioWatchdogView({
   return (
     <div className="space-y-6">
       {/* Top Account & Phase 5 Controls */}
-      <SpotlightBlock tone="obsidian" tilt="subtle" className="p-5">
+      <SpotlightBlock tone="obsidian" tilt="subtle" className="p-5 sm:p-6">
         <div className="flex flex-wrap items-center justify-between gap-4 border-b border-white/10 pb-4">
           <div>
-            <p className="font-mono text-[10px] uppercase tracking-[0.22em] text-zinc-400">
+            <p className="font-mono text-xs font-semibold uppercase tracking-widest text-zinc-200">
               Phase 4–5 Paper Portfolio · Intraday Watchdog · 4-Quadrant Attribution
             </p>
-            <h2 className="mt-1 font-serif text-xl font-semibold tracking-tight text-white">
+            <h2 className="mt-1 font-serif text-2xl font-semibold tracking-tight text-white">
               模拟盘执行、盘中哨兵预警与四象限复盘中心
             </h2>
           </div>
@@ -200,14 +200,14 @@ export function PortfolioWatchdogView({
                 value={adminToken}
                 onChange={(e) => setAdminToken(e.target.value)}
                 placeholder="X-Admin-Token (平仓/撤单)"
-                className="rounded-lg border border-white/15 bg-black/50 px-3 py-1.5 font-mono text-[11px] text-white placeholder:text-zinc-500"
+                className="rounded-lg border border-white/20 bg-black/60 px-3 py-2 font-mono text-xs text-white placeholder:text-zinc-300"
               />
             )}
             <button
               type="button"
               onClick={handleSyncOrders}
               disabled={syncing}
-              className="rounded-lg border border-white/20 bg-white/5 px-3.5 py-2 font-mono text-[11px] text-zinc-100 transition hover:bg-white/15 disabled:opacity-50"
+              className="rounded-lg border border-white/25 bg-white/10 px-3.5 py-2 font-mono text-xs font-medium text-white transition hover:bg-white/20 disabled:opacity-50"
             >
               {syncing ? "同步成交中..." : "同步 Alpaca 订单与盈亏"}
             </button>
@@ -215,41 +215,41 @@ export function PortfolioWatchdogView({
               type="button"
               onClick={handleScanWatchdog}
               disabled={scanning}
-              className="rounded-lg bg-[#F3F3F0] px-4 py-2 font-mono text-[11px] font-semibold text-[#0B0B0D] transition hover:bg-white disabled:opacity-50"
+              className="rounded-lg bg-[#F3F3F0] px-4 py-2 font-mono text-xs font-semibold text-[#0B0B0D] transition hover:bg-white disabled:opacity-50"
             >
               {scanning ? "哨兵扫描中..." : "立即运行盘中哨兵扫描 (Watchdog)"}
             </button>
           </div>
         </div>
 
-        <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-5">
-          <div className="rounded-xl border border-white/10 bg-white/[0.03] px-3.5 py-2.5">
-            <div className="text-[10px] uppercase tracking-wider text-zinc-400">模拟账户净值 (Equity)</div>
-            <div className="mt-1 font-mono text-lg font-semibold text-white">
+        <div className="mt-4 grid grid-cols-2 gap-3.5 sm:grid-cols-4 lg:grid-cols-5">
+          <div className="rounded-xl border border-white/15 bg-white/[0.04] px-4 py-3">
+            <div className="text-xs font-medium uppercase tracking-wider text-zinc-200">模拟账户净值 (Equity)</div>
+            <div className="mt-1 font-mono text-xl font-bold text-white">
               {ledger?.account ? `$${ledger.account.equity.toLocaleString()}` : "—"}
             </div>
           </div>
-          <div className="rounded-xl border border-white/10 bg-white/[0.03] px-3.5 py-2.5">
-            <div className="text-[10px] uppercase tracking-wider text-zinc-400">可用购买力 (Buying Power)</div>
-            <div className="mt-1 font-mono text-lg font-semibold text-white">
+          <div className="rounded-xl border border-white/15 bg-white/[0.04] px-4 py-3">
+            <div className="text-xs font-medium uppercase tracking-wider text-zinc-200">可用购买力 (Buying Power)</div>
+            <div className="mt-1 font-mono text-xl font-bold text-white">
               {ledger?.account ? `$${ledger.account.buying_power.toLocaleString()}` : "—"}
             </div>
           </div>
-          <div className="rounded-xl border border-white/10 bg-white/[0.03] px-3.5 py-2.5">
-            <div className="text-[10px] uppercase tracking-wider text-zinc-400">当前持仓标的数量</div>
-            <div className="mt-1 font-mono text-lg font-semibold text-white">
+          <div className="rounded-xl border border-white/15 bg-white/[0.04] px-4 py-3">
+            <div className="text-xs font-medium uppercase tracking-wider text-zinc-200">当前持仓标的数量</div>
+            <div className="mt-1 font-mono text-xl font-bold text-white">
               {ledger?.positions.length ?? 0}
             </div>
           </div>
-          <div className="rounded-xl border border-white/10 bg-white/[0.03] px-3.5 py-2.5">
-            <div className="text-[10px] uppercase tracking-wider text-zinc-400">待处理哨兵预警</div>
-            <div className="mt-1 font-mono text-lg font-semibold text-amber-300">
+          <div className="rounded-xl border border-white/15 bg-white/[0.04] px-4 py-3">
+            <div className="text-xs font-medium uppercase tracking-wider text-zinc-200">待处理哨兵预警</div>
+            <div className="mt-1 font-mono text-xl font-bold text-amber-300">
               {unackedCount} / {alerts.length}
             </div>
           </div>
-          <div className="rounded-xl border border-white/10 bg-white/[0.03] px-3.5 py-2.5">
-            <div className="text-[10px] uppercase tracking-wider text-zinc-400">长期经验记忆库</div>
-            <div className="mt-1 font-mono text-lg font-semibold text-emerald-300">
+          <div className="rounded-xl border border-white/15 bg-white/[0.04] px-4 py-3">
+            <div className="text-xs font-medium uppercase tracking-wider text-zinc-200">长期经验记忆库</div>
+            <div className="mt-1 font-mono text-xl font-bold text-emerald-300">
               {memories.length} 条
             </div>
           </div>
@@ -296,11 +296,11 @@ export function PortfolioWatchdogView({
           ) : (
             <>
               <div>
-                <h4 className="mb-2 font-mono text-[10px] font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
+                <h4 className="mb-2 font-mono text-xs font-semibold uppercase tracking-wider text-zinc-700 dark:text-zinc-200">
                   当前持仓 Positions ({ledger?.positions.length ?? 0})
                 </h4>
                 {!ledger || ledger.positions.length === 0 ? (
-                  <p className="rounded-xl border border-dashed border-zinc-300/80 px-3 py-4 text-center text-xs text-zinc-500 dark:border-white/15 dark:text-zinc-400">
+                  <p className="rounded-xl border border-dashed border-zinc-300 px-3 py-4 text-center text-sm text-zinc-700 dark:border-white/20 dark:text-zinc-200">
                     当前无持仓。可在「投研与风控台」审查并发起 Bracket 下单。
                   </p>
                 ) : (
@@ -308,23 +308,23 @@ export function PortfolioWatchdogView({
                     {ledger.positions.map((pos) => (
                       <div
                         key={pos.symbol}
-                        className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-zinc-200/80 bg-white/60 px-3.5 py-2.5 text-xs backdrop-blur-md dark:border-white/10 dark:bg-white/[0.04]"
+                        className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-zinc-200 bg-white/85 px-4 py-3 text-sm dark:border-white/15 dark:bg-white/[0.05]"
                       >
                         <div className="flex items-center gap-3">
                           <button
                             type="button"
                             onClick={() => onSelectSymbol?.(pos.symbol)}
-                            className="font-mono text-sm font-bold text-zinc-950 underline-offset-4 hover:underline dark:text-white"
+                            className="font-mono text-base font-bold text-zinc-950 underline-offset-4 hover:underline dark:text-white"
                           >
                             {pos.symbol}
                           </button>
-                          <span className="font-mono text-zinc-600 dark:text-zinc-300">
+                          <span className="font-mono text-xs font-medium text-zinc-800 dark:text-zinc-200">
                             {pos.qty} 股 @ 均价 ${pos.avg_entry_price.toFixed(2)} → 现价 ${pos.current_price.toFixed(2)}
                           </span>
                         </div>
                         <div className="flex items-center gap-3">
                           <span
-                            className={`font-mono font-semibold ${
+                            className={`font-mono font-bold ${
                               pos.unrealized_pl >= 0
                                 ? "text-emerald-700 dark:text-emerald-400"
                                 : "text-rose-700 dark:text-rose-400"
@@ -337,7 +337,7 @@ export function PortfolioWatchdogView({
                             type="button"
                             disabled={busyId === `close-${pos.symbol}`}
                             onClick={() => handleClosePosition(pos.symbol)}
-                            className="rounded-md border border-rose-300 bg-rose-50 px-2.5 py-1 font-mono text-[11px] font-medium text-rose-800 hover:bg-rose-100 disabled:opacity-50 dark:border-rose-500/40 dark:bg-rose-950/60 dark:text-rose-200 dark:hover:bg-rose-900/70"
+                            className="rounded-md border border-rose-300 bg-rose-50 px-3 py-1 font-mono text-xs font-semibold text-rose-800 hover:bg-rose-100 disabled:opacity-50 dark:border-rose-500/40 dark:bg-rose-950/60 dark:text-rose-200 dark:hover:bg-rose-900/70"
                           >
                             {busyId === `close-${pos.symbol}` ? "平仓中..." : "市价平仓"}
                           </button>
@@ -349,7 +349,7 @@ export function PortfolioWatchdogView({
               </div>
 
               <div className="pt-2">
-                <h4 className="mb-2 font-mono text-[10px] font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
+                <h4 className="mb-2 font-mono text-xs font-semibold uppercase tracking-wider text-zinc-700 dark:text-zinc-200">
                   近期 Alpaca 委托 Orders ({ledger?.orders.length ?? 0})
                 </h4>
                 <div className="max-h-56 space-y-1.5 overflow-y-auto pr-1">
@@ -360,16 +360,16 @@ export function PortfolioWatchdogView({
                     return (
                       <div
                         key={ord.id}
-                        className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-zinc-200/70 bg-white/50 px-3 py-2 font-mono text-[11px] dark:border-white/10 dark:bg-white/[0.03]"
+                        className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-zinc-200 bg-white/80 px-3.5 py-2.5 font-mono text-xs dark:border-white/15 dark:bg-white/[0.04]"
                       >
                         <div className="flex items-center gap-2">
-                          <span className="font-semibold text-zinc-950 dark:text-white">{ord.symbol}</span>
-                          <span className="uppercase text-zinc-600 dark:text-zinc-300">
+                          <span className="font-bold text-zinc-950 dark:text-white">{ord.symbol}</span>
+                          <span className="font-medium uppercase text-zinc-700 dark:text-zinc-200">
                             {ord.side} {ord.qty} ({ord.order_class})
                           </span>
                         </div>
                         <div className="flex items-center gap-2">
-                          <span className="rounded bg-zinc-100 px-2 py-0.5 text-[10px] text-zinc-700 dark:bg-white/10 dark:text-zinc-200">
+                          <span className="rounded bg-zinc-200/80 px-2 py-0.5 text-xs font-semibold text-zinc-900 dark:bg-white/15 dark:text-zinc-100">
                             {ord.status}
                             {ord.filled_avg_price ? ` @ $${Number(ord.filled_avg_price).toFixed(2)}` : ""}
                           </span>
@@ -378,7 +378,7 @@ export function PortfolioWatchdogView({
                               type="button"
                               disabled={busyId === `cancel-${ord.id}`}
                               onClick={() => handleCancelOrder(ord.id)}
-                              className="rounded border border-amber-300 bg-amber-50 px-2 py-0.5 text-[10px] text-amber-900 hover:bg-amber-100 disabled:opacity-50 dark:border-amber-500/40 dark:bg-amber-950/60 dark:text-amber-200"
+                              className="rounded border border-amber-400 bg-amber-50 px-2.5 py-0.5 text-xs font-semibold text-amber-900 hover:bg-amber-100 disabled:opacity-50 dark:border-amber-500/40 dark:bg-amber-950/60 dark:text-amber-200"
                             >
                               {busyId === `cancel-${ord.id}` ? "撤单中" : "撤单"}
                             </button>
@@ -394,20 +394,20 @@ export function PortfolioWatchdogView({
         </SpotlightBlock>
 
         {/* Agent 3 Watchdog Alerts */}
-        <SpotlightBlock tone="gallery" tilt="subtle" className="space-y-3 p-5 lg:col-span-5">
-          <div className="flex items-center justify-between border-b border-zinc-200/80 pb-3 dark:border-white/10">
+        <SpotlightBlock tone="gallery" tilt="subtle" className="space-y-3 p-5 sm:p-6 lg:col-span-5">
+          <div className="flex items-center justify-between border-b border-zinc-200 pb-3 dark:border-white/15">
             <div>
-              <h3 className="font-serif text-base font-semibold text-zinc-950 dark:text-white">
+              <h3 className="font-serif text-lg font-semibold text-zinc-950 dark:text-white">
                 Agent 3 盘中异常预警雷达
               </h3>
-              <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
+              <p className="text-xs font-medium text-zinc-700 dark:text-zinc-200">
                 自动扫描 RVOL ≥ 1.8x 放量、负 GEX 破位、VIX 倒挂与 24h 高危宏观事件
               </p>
             </div>
           </div>
 
           {alerts.length === 0 ? (
-            <div className="rounded-xl border border-dashed border-zinc-300/80 px-4 py-8 text-center text-xs text-zinc-500 dark:border-white/15 dark:text-zinc-400">
+            <div className="rounded-xl border border-dashed border-zinc-300 px-4 py-8 text-center text-sm text-zinc-700 dark:border-white/20 dark:text-zinc-200">
               暂无异常预警记录，可点击上方「立即运行盘中哨兵扫描 (Watchdog)」。
             </div>
           ) : (
@@ -417,16 +417,16 @@ export function PortfolioWatchdogView({
                   key={al.id}
                   className={`rounded-xl border p-3.5 transition ${
                     al.acknowledged
-                      ? "border-zinc-200/70 bg-white/40 opacity-70 dark:border-white/10 dark:bg-white/[0.02]"
+                      ? "border-zinc-200 bg-white/60 opacity-75 dark:border-white/10 dark:bg-white/[0.03]"
                       : al.severity === "high"
-                        ? "border-rose-300/90 bg-rose-50/50 dark:border-rose-500/40 dark:bg-rose-950/25"
-                        : "border-amber-300/90 bg-amber-50/50 dark:border-amber-500/40 dark:bg-amber-950/25"
+                        ? "border-rose-300 bg-rose-50/75 dark:border-rose-500/40 dark:bg-rose-950/35"
+                        : "border-amber-300 bg-amber-50/75 dark:border-amber-500/40 dark:bg-amber-950/35"
                   }`}
                 >
                   <div className="flex items-start justify-between gap-2">
                     <div className="flex flex-wrap items-center gap-1.5">
                       <span
-                        className={`rounded-full px-2 py-0.5 font-mono text-[10px] font-semibold uppercase ${
+                        className={`rounded-full px-2 py-0.5 font-mono text-xs font-semibold uppercase ${
                           al.severity === "high"
                             ? "bg-rose-700 text-white"
                             : "bg-amber-700 text-white"
@@ -438,12 +438,12 @@ export function PortfolioWatchdogView({
                         <button
                           type="button"
                           onClick={() => onSelectSymbol?.(al.symbol || "SPY")}
-                          className="rounded border border-zinc-300/80 bg-white/80 px-2 py-0.5 font-mono text-[10px] font-semibold text-zinc-950 hover:bg-white dark:border-white/15 dark:bg-white/10 dark:text-white"
+                          className="rounded border border-zinc-300 bg-white px-2 py-0.5 font-mono text-xs font-bold text-zinc-950 hover:bg-zinc-100 dark:border-white/20 dark:bg-white/15 dark:text-white"
                         >
                           {al.symbol}
                         </button>
                       )}
-                      <span className="font-mono text-[10px] text-zinc-500 dark:text-zinc-400">
+                      <span className="font-mono text-xs font-medium text-zinc-700 dark:text-zinc-200">
                         {new Date(al.created_at).toLocaleString()}
                       </span>
                     </div>
@@ -452,13 +452,13 @@ export function PortfolioWatchdogView({
                         type="button"
                         disabled={busyId === `ack-${al.id}`}
                         onClick={() => handleAckAlert(al.id)}
-                        className="shrink-0 rounded border border-zinc-300 bg-white/80 px-2 py-0.5 font-mono text-[10px] text-zinc-700 hover:bg-zinc-950 hover:text-white dark:border-white/20 dark:bg-white/10 dark:text-zinc-200 dark:hover:bg-white dark:hover:text-zinc-950"
+                        className="shrink-0 rounded border border-zinc-300 bg-white px-2.5 py-0.5 font-mono text-xs font-medium text-zinc-800 hover:bg-zinc-950 hover:text-white dark:border-white/20 dark:bg-white/10 dark:text-zinc-100"
                       >
                         已知悉
                       </button>
                     )}
                   </div>
-                  <div className="mt-1.5 text-[13px] font-semibold text-zinc-950 dark:text-white">{al.title}</div>
+                  <div className="mt-1.5 text-sm font-semibold text-zinc-950 dark:text-white">{al.title}</div>
                   <div className="mt-1">
                     <MarkdownReport content={al.summary_markdown} compact />
                   </div>

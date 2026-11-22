@@ -362,14 +362,14 @@ export default function StatusConsole() {
   }, [apiError, health]);
 
   return (
-    <div className="mx-auto flex w-full max-w-[1460px] flex-col px-4 pt-5 sm:px-6">
+    <div className="mx-auto flex w-full max-w-[1780px] flex-col px-4 pt-5 sm:px-6 lg:px-8">
       {/* Compact Sub-Toolbar (no double sticky navbar!) */}
-      <div className="mb-5 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-zinc-200/80 bg-white/65 px-4 py-2.5 backdrop-blur-xl dark:border-white/10 dark:bg-white/[0.04]">
+      <div className="mb-5 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-zinc-200/80 bg-white/75 px-4 py-2.5 backdrop-blur-xl dark:border-white/15 dark:bg-white/[0.05]">
         <div className="flex items-center gap-2.5">
           <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-zinc-950 text-white dark:bg-white dark:text-zinc-950">
             <Activity className="h-3.5 w-3.5" />
           </div>
-          <span className="font-mono text-[11px] font-semibold tracking-wider text-zinc-800 dark:text-zinc-200">
+          <span className="font-mono text-xs font-semibold tracking-wider text-zinc-900 dark:text-zinc-100">
             {health?.phase || "Phase 5 · Infra & Golden Benchmark"}
           </span>
         </div>
@@ -694,13 +694,13 @@ export default function StatusConsole() {
                 className="velvet-black-block flex flex-col justify-between gap-4 rounded-2xl p-6 text-white sm:flex-row sm:items-center"
               >
                 <div>
-                  <div className="font-mono text-[10px] uppercase tracking-widest text-zinc-400">
+                  <div className="font-mono text-xs uppercase tracking-widest text-zinc-200">
                     PHASE 5 GOLDEN BENCHMARK · 32 DETERMINISTIC &amp; POLICY CASES
                   </div>
                   <h1 className="mt-1 font-serif text-3xl tracking-tight text-white">
                     量化算子、风控护栏与归因记忆回归评测矩阵
                   </h1>
-                  <p className="mt-1 text-xs text-zinc-400">
+                  <p className="mt-1 text-sm text-zinc-200">
                     离线零 Token 秒级验证宏观体制、GEX 做市商算法、1% 预算钳位、Bracket 止损防错与 RRF 混合检索。
                   </p>
                 </div>
@@ -708,7 +708,7 @@ export default function StatusConsole() {
                 <div className="flex items-center gap-3">
                   {evalReport && (
                     <div className="rounded-xl bg-white px-4 py-2 text-right text-zinc-950">
-                      <div className="font-mono text-[10px] text-zinc-500">通过率 PASS RATE</div>
+                      <div className="font-mono text-xs font-medium text-zinc-700">通过率 PASS RATE</div>
                       <div className="font-mono text-xl font-bold tabular-nums">
                         {evalReport.passed_cases}/{evalReport.total_cases} ({evalReport.pass_rate_pct}%)
                       </div>
@@ -761,10 +761,10 @@ export default function StatusConsole() {
 
                   <div className="velvet-white-block rounded-2xl p-5">
                     <div className="mb-3 flex flex-wrap items-center justify-between gap-2 border-b border-zinc-200/80 pb-2 font-mono text-xs dark:border-white/10">
-                      <span className="font-semibold text-zinc-900 dark:text-white">
+                      <span className="font-semibold text-zinc-950 dark:text-white">
                         测试用例明细 ({evalCategoryFilter === "all" ? "全部 32 项" : evalCategoryFilter})
                       </span>
-                      <span className="text-zinc-500 dark:text-zinc-400">
+                      <span className="font-medium text-zinc-700 dark:text-zinc-200">
                         耗时 {evalReport.duration_ms} ms · 更新于 {evalReport.generated_at}
                       </span>
                     </div>
@@ -776,11 +776,11 @@ export default function StatusConsole() {
                         .map((r) => (
                           <div
                             key={r.id}
-                            className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-zinc-200/70 bg-white/60 px-3 py-2 text-xs transition-colors hover:border-zinc-300 dark:border-white/10 dark:bg-white/[0.04] dark:hover:border-white/25"
+                            className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-zinc-200/80 bg-white/80 px-3 py-2 text-xs transition-colors hover:border-zinc-400 dark:border-white/15 dark:bg-white/[0.05] dark:hover:border-white/30"
                           >
                             <div className="flex items-center gap-2.5">
                               <span
-                                className={`rounded px-1.5 py-0.5 font-mono text-[10px] font-bold ${
+                                className={`rounded px-1.5 py-0.5 font-mono text-xs font-bold ${
                                   r.passed
                                     ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-500/20 dark:text-emerald-300"
                                     : "bg-rose-100 text-rose-800 dark:bg-rose-500/20 dark:text-rose-300"
@@ -788,12 +788,12 @@ export default function StatusConsole() {
                               >
                                 {r.passed ? "PASS" : "FAIL"}
                               </span>
-                              <span className="font-mono text-[11px] font-semibold text-zinc-700 dark:text-zinc-300">
+                              <span className="font-mono text-xs font-bold text-zinc-900 dark:text-zinc-100">
                                 {r.id}
                               </span>
-                              <span className="text-zinc-900 dark:text-zinc-100">{r.name}</span>
+                              <span className="font-medium text-zinc-950 dark:text-zinc-50">{r.name}</span>
                             </div>
-                            <span className="font-mono text-[10px] text-zinc-500 dark:text-zinc-400">
+                            <span className="font-mono text-xs text-zinc-700 dark:text-zinc-300">
                               {r.elapsed_ms}ms · {JSON.stringify(r.observed)}
                             </span>
                           </div>

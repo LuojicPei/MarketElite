@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
@@ -505,3 +506,93 @@ class MacroFeedsClient:
             hard_ttl_seconds=86400 * 5,
         )
         return list(res.data)
+
+    @staticmethod
+    def _normalize_exchange(raw: str | None) -> str:
+        text = (raw or "").upper()
+        if "NASDAQ" in text:
+            return "NASDAQ"
+        if "NEW YORK STOCK EXCHANGE" in text or text.strip() == "NYSE":
+            return "NYSE"
+        if "ARCA" in text:
+            return "NYSE Arca"
+        if "BATS" in text or "CBOE" in text:
+            return "CBOE"
+        return raw.strip() if raw and raw.strip() else "US"
+
+    async def get_finnhub_company_overview(self, symbol: str) -> dict[str, Any]:
+        """Fetch & cache Finnhub company profile2 + valuation metrics for Watchlist & Stock Detail."""
+        sym = symbol.upper().strip()
+        api_key = self._settings.finnhub_api_key.strip()
+        if not api_key or not sym:
+            return {}
+
+        async def _fetch() -> dict[str, Any]:
+            async def _exec(client: httpx.AsyncClient) -> dict[str, Any]:
+                prof_task = client.get(
+                    "https://finnhub.io/api/v1/stock/profile2",
+                    params={"symbol": sym, "token": api_key},
+                    timeout=10.0,
+                )
+                met_task = client.get(
+                    "https://finnhub.io/api/v1/stock/metric",
+                    params={"symbol": sym, "metric": "all", "token": api_key},
+                    timeout=10.0,
+                )
+                prof_resp, met_resp = await asyncio.gather(prof_task, met_task, return_exceptions=True)
+
+                prof_json: dict[str, Any] = {}
+                if isinstance(prof_resp, httpx.Response) and prof_resp.status_code == 200:
+                    data = prof_resp.json()
+                    if isinstance(data, dict):
+                        prof_json = data
+
+                met_json: dict[str, Any] = {}
+                if isinstance(met_resp, httpx.Response) and met_resp.status_code == 200:
+                    data = met_resp.json()
+                    if isinstance(data, dict) and isinstance(data.get("metric"), dict):
+                        met_json = data["metric"]
+
+                def _num(val: Any) -> float | None:
+                    if val is None or isinstance(val, bool):
+                        return None
+                    try:
+                        return float(val)
+                    except (TypeError, ValueError):
+                        return None
+
+                mkt_cap_m = _num(prof_json.get("marketCapitalization"))
+                return {
+                    "symbol": sym,
+                    "name": prof_json.get("name") or sym,
+                    "exchange": self._normalize_exchange(prof_json.get("exchange")),
+                    "industry": prof_json.get("finnhubIndustry") or None,
+                    "logo_url": prof_json.get("logo") or None,
+                    "weburl": prof_json.get("weburl") or None,
+                    "ipo": prof_json.get("ipo") or None,
+                    "country": prof_json.get("country") or "US",
+                    "market_cap_b": round(mkt_cap_m / 1000.0, 2) if mkt_cap_m else None,
+                    "week52_high": _num(met_json.get("52WeekHigh")),
+                    "week52_low": _num(met_json.get("52WeekLow")),
+                    "pe_ttm": _num(met_json.get("peBasicExclExtraTTM") or met_json.get("peTTM")),
+                    "pb": _num(met_json.get("pbQuarterly") or met_json.get("pbAnnual")),
+                    "beta": _num(met_json.get("beta")),
+                    "dividend_yield": _num(met_json.get("dividendYieldIndicatedAnnual")),
+                    "avg_vol_10d_m": _num(met_json.get("10DayAverageTradingVolume")),
+                }
+
+            if self._http_client is not None:
+                return await _exec(self._http_client)
+            async with httpx.AsyncClient() as client:
+                return await _exec(client)
+
+        if self._cache is None:
+            return await _fetch()
+        res = await self._cache.get_or_fetch(
+            f"marketelite:finnhub:overview:{sym}",
+            provider="finnhub",
+            fetcher=_fetch,
+            soft_ttl_seconds=3600 * 12,
+            hard_ttl_seconds=86400 * 7,
+        )
+        return dict(res.data or {})

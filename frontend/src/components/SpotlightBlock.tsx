@@ -12,15 +12,12 @@ interface SpotlightBlockProps {
 }
 
 /**
- * High-tactility Frosted Velvet panel.
+ * High-contrast Frosted Velvet architectural panel.
  *
- * Intentionally avoids 3D rotateX/rotateY, fractional scale(), preserve-3d, and
- * will-change: transform on the text-bearing container so Chromium never downgrades
- * text/canvas sharpness while hovering. Tactile responsiveness comes from:
- *   1. Decoupled optical frosted glass underlay (backdrop-filter isolated from text)
- *   2. Cursor-tracked prismatic border-mask rim flare around all 4 card edges
- *   3. Spring-eased diagonal velvet satin sweep across the glass surface
- *   4. Expanding top specular bevel & deep elevation box-shadow
+ * Tactile responsiveness comes strictly from outer perimeter optics (1.5px cursor-tracked
+ * bezel arc, sharp border elevation, top bevel glint, and multi-layer shadow depth).
+ * Zero white overlay haze is painted over card content and zero 3D transform/scale
+ * is applied, keeping typography and charts 100% crisp under hover.
  */
 export default function SpotlightBlock({
   tone,
@@ -34,16 +31,10 @@ export default function SpotlightBlock({
   const sheenX = useSpring(rawX, { stiffness: 220, damping: 26 });
   const sheenY = useSpring(rawY, { stiffness: 220, damping: 26 });
 
-  const glassWaveBackground = useMotionTemplate`radial-gradient(560px circle at ${sheenX}% ${sheenY}%, ${
+  const perimeterArcBackground = useMotionTemplate`radial-gradient(380px circle at ${sheenX}% ${sheenY}%, ${
     tone === "obsidian"
-      ? "rgba(255, 255, 255, 0.13)"
-      : "rgba(255, 255, 255, 0.48)"
-  }, transparent 68%)`;
-
-  const perimeterArcBackground = useMotionTemplate`radial-gradient(420px circle at ${sheenX}% ${sheenY}%, ${
-    tone === "obsidian"
-      ? "rgba(255, 255, 255, 0.92)"
-      : "rgba(24, 24, 27, 0.65)"
+      ? "rgba(255, 255, 255, 0.85)"
+      : "rgba(24, 24, 27, 0.58)"
   }, transparent 72%)`;
 
   const handleMouseEnter = useCallback(() => {
@@ -54,10 +45,8 @@ export default function SpotlightBlock({
     (e: React.MouseEvent<HTMLDivElement>) => {
       const rect = e.currentTarget.getBoundingClientRect();
       if (!rect.width || !rect.height) return;
-      const px = ((e.clientX - rect.left) / rect.width) * 100;
-      const py = ((e.clientY - rect.top) / rect.height) * 100;
-      rawX.set(px);
-      rawY.set(py);
+      rawX.set(((e.clientX - rect.left) / rect.width) * 100);
+      rawY.set(((e.clientY - rect.top) / rect.height) * 100);
     },
     [rawX, rawY]
   );
@@ -82,23 +71,13 @@ export default function SpotlightBlock({
         className
       )}
     >
-      {/* Full-Panel Velvet Satin Optical Sweep */}
-      <motion.div
-        aria-hidden="true"
-        className="pointer-events-none absolute inset-0 z-10 rounded-[inherit] transition-opacity duration-200"
-        style={{
-          background: glassWaveBackground,
-          opacity: hovered ? 0.9 : 0,
-        }}
-      />
-
-      {/* Magnetic Beveled Perimeter Edge Light (lights only the 1.5px rounded frame) */}
+      {/* Magnetic Beveled Perimeter Edge Light (strictly restricted to 1.5px frame edge) */}
       <motion.div
         aria-hidden="true"
         className="pointer-events-none absolute inset-0 z-20 rounded-[inherit] p-[1.5px] transition-opacity duration-200"
         style={{
           background: perimeterArcBackground,
-          opacity: hovered ? 0.95 : 0,
+          opacity: hovered ? 0.92 : 0,
           WebkitMask: "linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0)",
           WebkitMaskComposite: "xor",
           mask: "linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0)",
@@ -111,7 +90,7 @@ export default function SpotlightBlock({
         aria-hidden="true"
         className={clsx(
           "pointer-events-none absolute top-0 z-20 h-[1.5px] transition-all duration-300",
-          hovered ? "inset-x-2" : "inset-x-8",
+          hovered ? "inset-x-2" : "inset-x-10",
           tone === "obsidian"
             ? hovered
               ? "bg-gradient-to-r from-transparent via-white/75 to-transparent"
@@ -122,7 +101,6 @@ export default function SpotlightBlock({
         )}
       />
 
-      {/* Inner Content Rendered Directly at Native Subpixel Crispness */}
       {children}
     </div>
   );

@@ -4,8 +4,8 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import {
   Activity,
+  ArrowRight,
   BarChart3,
-  Calendar,
   Layers,
   Moon,
   Newspaper,
@@ -19,10 +19,12 @@ import SpotlightBlock from "@/components/SpotlightBlock";
 import MacroTickerStrip from "@/components/MacroTickerStrip";
 import StatusConsole from "@/components/StatusConsole";
 import InvestigatorDrawer from "@/components/InvestigatorDrawer";
+import StockDetailView from "@/components/StockDetailView";
+import WatchlistCardPanel from "@/components/WatchlistCardPanel";
+import WatchlistWorkspace from "@/components/WatchlistWorkspace";
 import { PortfolioWatchdogView } from "@/components/PortfolioWatchdogView";
 import { useTheme } from "@/components/ThemeProvider";
 import AssetCandlestickChart from "@/components/charts/AssetCandlestickChart";
-import CorrelationHeatmapChart from "@/components/charts/CorrelationHeatmapChart";
 import GexProfileChart from "@/components/charts/GexProfileChart";
 import NetLiquidityChart from "@/components/charts/NetLiquidityChart";
 import {
@@ -30,13 +32,16 @@ import {
   DashboardOverviewResponse,
   RegimeHistoryPoint,
   TrackedAssetSummary,
+  WatchlistAssetItem,
   ensureAsset,
   fetchAssetDetail,
   fetchDashboardOverview,
   fetchRegimeHistory,
   fetchTrackedAssets,
   fetchWatchdogAlerts,
+  fetchWatchlist,
   triggerPipelineSync,
+  updateWatchlist,
 } from "@/lib/api";
 import {
   formatCreditState,
@@ -120,15 +125,40 @@ function formatRegimeLabel(label: string | undefined): string {
   return REGIME_BI[label] ?? label.replaceAll("_", " ");
 }
 
-export default function MarketCockpit() {
+export type CockpitViewMode =
+  | "cockpit"
+  | "watchlist"
+  | "stock"
+  | "copilot"
+  | "portfolio"
+  | "infra";
+
+interface MarketCockpitProps {
+  initialView?: CockpitViewMode;
+  initialStock?: string;
+}
+
+export default function MarketCockpit({
+  initialView = "cockpit",
+  initialStock,
+}: MarketCockpitProps) {
+  const normalizedInitialStock = initialStock ? initialStock.toUpperCase().trim() : undefined;
   const { theme, toggleTheme } = useTheme();
-  const [viewMode, setViewMode] = useState<"cockpit" | "copilot" | "portfolio" | "infra">("cockpit");
+  const [viewMode, setViewMode] = useState<CockpitViewMode>(initialView);
   const [overview, setOverview] = useState<DashboardOverviewResponse | null>(null);
   const [trackedAssets, setTrackedAssets] = useState<TrackedAssetSummary[]>([]);
   const [regimeHistory, setRegimeHistory] = useState<RegimeHistoryPoint[]>([]);
   const [unackedAlerts, setUnackedAlerts] = useState<number>(0);
 
-  const [selectedSymbol, setSelectedSymbol] = useState<string>("SPY");
+  const [selectedSymbol, setSelectedSymbol] = useState<string>(normalizedInitialStock || "SPY");
+  const [activeStockSymbol, setActiveStockSymbol] = useState<string>(
+    normalizedInitialStock || "NVDA"
+  );
+  const [watchlistItems, setWatchlistItems] = useState<WatchlistAssetItem[]>([]);
+  const [watchlistLoading, setWatchlistLoading] = useState<boolean>(true);
+  const [watchlistMutating, setWatchlistMutating] = useState<boolean>(false);
+  const [watchlistError, setWatchlistError] = useState<string | null>(null);
+
   const [tickerSearchInput, setTickerSearchInput] = useState<string>("");
   const [searchingTicker, setSearchingTicker] = useState<boolean>(false);
   const [tickerSearchError, setTickerSearchError] = useState<string | null>(null);
@@ -137,12 +167,24 @@ export default function MarketCockpit() {
 
   const [assetDetail, setAssetDetail] = useState<AssetDetailResponse | null>(null);
   const [gexSymbol, setGexSymbol] = useState<"SPY" | "QQQ">("SPY");
-  const [calendarFilter, setCalendarFilter] = useState<"all" | "macro" | "earnings">("all");
   const [loading, setLoading] = useState<boolean>(true);
   const [assetLoading, setAssetLoading] = useState<boolean>(false);
   const [syncing, setSyncing] = useState<boolean>(false);
   const [drawerOpen, setDrawerOpen] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
+
+  const loadWatchlistData = useCallback(async () => {
+    setWatchlistLoading(true);
+    try {
+      const res = await fetchWatchlist();
+      setWatchlistItems(res.items);
+      setWatchlistError(null);
+    } catch (err) {
+      setWatchlistError(err instanceof Error ? err.message : "无法读取关注列表");
+    } finally {
+      setWatchlistLoading(false);
+    }
+  }, []);
 
   const loadOverviewAndAssets = useCallback(async () => {
     setError(null);
@@ -162,6 +204,78 @@ export default function MarketCockpit() {
     } finally {
       setLoading(false);
     }
+  }, []);
+
+  const handlePersistWatchlist = async (nextSymbols: string[]) => {
+    setWatchlistMutating(true);
+    setWatchlistError(null);
+    try {
+      const updated = await updateWatchlist(nextSymbols);
+      setWatchlistItems(updated.items);
+    } catch (err) {
+      setWatchlistError(err instanceof Error ? err.message : "更新关注列表失败");
+    } finally {
+      setWatchlistMutating(false);
+    }
+  };
+
+  const handleAddWatchlistSymbol = async (symbol: string) => {
+    const sym = symbol.toUpperCase().trim();
+    if (!sym) return;
+    const current = watchlistItems.map((x) => x.symbol);
+    if (current.includes(sym)) {
+      setWatchlistError(`${sym} 已在关注列表中`);
+      return;
+    }
+    await handlePersistWatchlist([sym, ...current]);
+  };
+
+  const handleRemoveWatchlistSymbol = async (symbol: string) => {
+    const sym = symbol.toUpperCase().trim();
+    const next = watchlistItems.map((x) => x.symbol).filter((s) => s !== sym);
+    await handlePersistWatchlist(next);
+  };
+
+  const handleToggleWatchlistSymbol = async (symbol: string) => {
+    const sym = symbol.toUpperCase().trim();
+    const current = watchlistItems.map((x) => x.symbol);
+    if (current.includes(sym)) {
+      await handlePersistWatchlist(current.filter((s) => s !== sym));
+    } else {
+      await handlePersistWatchlist([sym, ...current]);
+    }
+  };
+
+  const navigateView = useCallback((mode: CockpitViewMode, stockSym?: string) => {
+    setViewMode(mode);
+    if (mode === "stock" && stockSym) {
+      const sym = stockSym.toUpperCase().trim();
+      setActiveStockSymbol(sym);
+      setSelectedSymbol(sym);
+      if (typeof window !== "undefined") {
+        window.history.pushState({ viewMode: "stock", symbol: sym }, "", `/stocks/${sym}`);
+        window.scrollTo({ top: 0, behavior: "smooth" });
+      }
+    } else if (typeof window !== "undefined" && window.location.pathname !== "/") {
+      window.history.pushState({ viewMode: mode }, "", "/");
+    }
+  }, []);
+
+  useEffect(() => {
+    const onPopState = () => {
+      if (typeof window === "undefined") return;
+      const m = window.location.pathname.match(/^\/stocks\/([^/]+)/i);
+      if (m && m[1]) {
+        const sym = decodeURIComponent(m[1]).toUpperCase();
+        setActiveStockSymbol(sym);
+        setSelectedSymbol(sym);
+        setViewMode("stock");
+      } else {
+        setViewMode("cockpit");
+      }
+    };
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
   }, []);
 
   const loadAsset = useCallback(async (symbol: string) => {
@@ -197,7 +311,8 @@ export default function MarketCockpit() {
 
   useEffect(() => {
     loadOverviewAndAssets();
-  }, [loadOverviewAndAssets]);
+    loadWatchlistData();
+  }, [loadOverviewAndAssets, loadWatchlistData]);
 
   useEffect(() => {
     if (viewMode === "cockpit") {
@@ -232,35 +347,33 @@ export default function MarketCockpit() {
     return [...items].sort((a, b) => a.symbol.localeCompare(b.symbol));
   }, [trackedAssets, watchlistFilter, watchlistSort]);
 
-  const filteredCalendar = useMemo(() => {
-    const events = overview?.positioning_and_calendar?.upcoming_events ?? [];
-    if (calendarFilter === "all") return events;
-    return events.filter((ev) => ev.event_type === calendarFilter);
-  }, [overview, calendarFilter]);
-
   const activeGex = overview?.options_gex?.[gexSymbol] ?? null;
 
   const leftNavItems = [
-    { id: "cockpit" as const, label: "驾驶舱" },
-    { id: "copilot" as const, label: "投研与风控台" },
+    { id: "cockpit" as const, label: "市场总览" },
+    { id: "watchlist" as const, label: "我的关注" },
   ];
 
   const rightNavItems = [
+    { id: "copilot" as const, label: "投研与风控台" },
     { id: "portfolio" as const, label: "模拟盘与复盘" },
     { id: "infra" as const, label: "系统与评测" },
   ];
 
-  const renderNavPill = (tabItem: { id: "cockpit" | "copilot" | "portfolio" | "infra"; label: string }) => {
+  const renderNavPill = (tabItem: {
+    id: "cockpit" | "watchlist" | "copilot" | "portfolio" | "infra";
+    label: string;
+  }) => {
     const isActive = viewMode === tabItem.id;
     return (
       <button
         key={tabItem.id}
         type="button"
-        onClick={() => setViewMode(tabItem.id)}
-        className={`relative inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5 font-sans text-[12px] tracking-tight transition-colors duration-200 ${
+        onClick={() => navigateView(tabItem.id)}
+        className={`relative inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5 font-sans text-[13px] tracking-tight transition-colors duration-200 ${
           isActive
             ? "font-semibold text-zinc-950 dark:text-white"
-            : "font-medium text-zinc-700 hover:text-zinc-950 dark:text-zinc-300 dark:hover:text-white"
+            : "font-medium text-zinc-800 hover:text-zinc-950 dark:text-zinc-200 dark:hover:text-white"
         }`}
       >
         {isActive && (
@@ -271,8 +384,13 @@ export default function MarketCockpit() {
           />
         )}
         <span className="relative z-10">{tabItem.label}</span>
+        {tabItem.id === "watchlist" && watchlistItems.length > 0 && (
+          <span className="relative z-10 rounded-full bg-zinc-900/10 px-1.5 py-0.2 font-mono text-[10px] font-bold text-zinc-900 dark:bg-white/20 dark:text-zinc-100">
+            {watchlistItems.length}
+          </span>
+        )}
         {tabItem.id === "portfolio" && unackedAlerts > 0 && (
-          <span className="relative z-10 rounded-full bg-rose-600 px-1.5 py-0.2 font-mono text-[9px] font-bold text-white shadow-sm">
+          <span className="relative z-10 rounded-full bg-rose-600 px-1.5 py-0.2 font-mono text-[10px] font-bold text-white shadow-sm">
             {unackedAlerts}
           </span>
         )}
@@ -281,17 +399,17 @@ export default function MarketCockpit() {
   };
 
   return (
-    <div className="min-h-screen pb-20">
+    <div className="min-h-screen pb-16">
       {/* Floating Apple Liquid Glass Split Architectural Navigation Bar */}
-      <header className="pointer-events-none sticky top-0 z-40 px-4 pt-3 pb-1.5 sm:px-6">
-        <div className="mx-auto flex max-w-[1460px] flex-wrap items-center justify-between gap-2.5">
+      <header className="pointer-events-none sticky top-0 z-40 px-4 pt-3 pb-1.5 sm:px-6 lg:px-8">
+        <div className="mx-auto flex w-full max-w-[1780px] flex-wrap items-center justify-between gap-2.5">
           {/* Left Floating Circular Glass Controls */}
           <div className="pointer-events-auto flex items-center gap-2">
             <button
               type="button"
               onClick={() => {
                 if (viewMode !== "cockpit") {
-                  setViewMode("cockpit");
+                  navigateView("cockpit");
                 }
                 setDrawerOpen((v) => !v);
               }}
@@ -319,7 +437,7 @@ export default function MarketCockpit() {
                   ? "Redis Hot <50ms · 点击强制同步管线"
                   : "同步市场宏观与量价管线"
               }
-              className="apple-liquid-glass-btn inline-flex h-10 items-center gap-1.5 rounded-full px-3.5 font-mono text-[11px] font-medium text-zinc-800 disabled:opacity-50 dark:text-zinc-100"
+              className="apple-liquid-glass-btn inline-flex h-10 items-center gap-1.5 rounded-full px-3.5 font-mono text-xs font-medium text-zinc-900 disabled:opacity-50 dark:text-zinc-100"
             >
               <RefreshCw className={`h-3.5 w-3.5 ${syncing ? "animate-spin" : ""}`} />
               <span className="hidden sm:inline">{syncing ? "同步中" : "同步"}</span>
@@ -335,20 +453,20 @@ export default function MarketCockpit() {
           {/* Center Split Apple Liquid Glass Navigation Capsule + Rising Brand Emblem */}
           <nav
             aria-label="Primary Workspaces"
-            className="pointer-events-auto order-3 flex w-full justify-center md:order-2 md:w-auto"
+            className="pointer-events-auto order-3 flex w-full justify-center lg:order-2 lg:w-auto"
           >
-            <div className="apple-liquid-glass relative flex h-11 items-center gap-1 rounded-full px-2">
-              <div className="flex items-center gap-0.5">{leftNavItems.map(renderNavPill)}</div>
+            <div className="apple-liquid-glass relative flex h-11 items-center gap-1 overflow-x-auto rounded-full px-2">
+              <div className="flex shrink-0 items-center gap-0.5">{leftNavItems.map(renderNavPill)}</div>
 
-              {/* Central Rising Brand Prism Crest (Inspired by Split Capsule Center Mark) */}
+              {/* Central Rising Brand Prism Crest */}
               <button
                 type="button"
                 onClick={() => {
-                  setViewMode("cockpit");
+                  navigateView("cockpit");
                   window.scrollTo({ top: 0, behavior: "smooth" });
                 }}
-                title="MarketElite · 返回驾驶舱顶部"
-                className="group relative mx-1.5 flex items-center gap-2 rounded-full px-2 py-1 transition-transform duration-200 hover:scale-[1.04]"
+                title="MarketElite · 返回市场总览顶部"
+                className="group relative mx-1.5 flex shrink-0 items-center gap-2 rounded-full px-2 py-1 transition-transform duration-200 hover:scale-[1.04]"
               >
                 <span className="relative -my-3 flex h-12 w-10 items-center justify-center filter drop-shadow-[0_6px_14px_rgba(24,24,27,0.28)] dark:drop-shadow-[0_6px_16px_rgba(0,0,0,0.85)]">
                   <svg
@@ -380,22 +498,22 @@ export default function MarketCockpit() {
                     />
                   </svg>
                 </span>
-                <span className="hidden font-serif text-[16px] font-medium italic tracking-tight text-zinc-950 transition-colors duration-150 dark:text-zinc-50 sm:inline">
+                <span className="hidden font-serif text-[17px] font-medium italic tracking-tight text-zinc-950 transition-colors duration-150 dark:text-zinc-50 sm:inline">
                   MarketElite
                 </span>
               </button>
 
-              <div className="flex items-center gap-0.5">{rightNavItems.map(renderNavPill)}</div>
+              <div className="flex shrink-0 items-center gap-0.5">{rightNavItems.map(renderNavPill)}</div>
             </div>
           </nav>
 
           {/* Right Floating Liquid Glass Controls: Theme Switcher & GitHub Icon */}
-          <div className="pointer-events-auto order-2 flex items-center gap-2 md:order-3">
+          <div className="pointer-events-auto order-2 flex items-center gap-2 lg:order-3">
             <button
               type="button"
               onClick={toggleTheme}
               title="切换丝绒白昼 / 黑曜夜幕主题"
-              className="apple-liquid-glass-btn inline-flex h-10 items-center gap-1.5 rounded-full px-3.5 font-mono text-[11px] font-medium text-zinc-800 dark:text-zinc-100"
+              className="apple-liquid-glass-btn inline-flex h-10 items-center gap-1.5 rounded-full px-3.5 font-mono text-xs font-medium text-zinc-900 dark:text-zinc-100"
             >
               {theme === "dark" ? (
                 <>
@@ -404,7 +522,7 @@ export default function MarketCockpit() {
                 </>
               ) : (
                 <>
-                  <Moon className="h-3.5 w-3.5 text-zinc-700" />
+                  <Moon className="h-3.5 w-3.5 text-zinc-800" />
                   <span>黑曜夜幕</span>
                 </>
               )}
@@ -432,8 +550,37 @@ export default function MarketCockpit() {
 
       {viewMode === "infra" ? (
         <StatusConsole />
+      ) : viewMode === "watchlist" ? (
+        <WatchlistWorkspace
+          items={watchlistItems}
+          loading={watchlistLoading}
+          mutating={watchlistMutating}
+          error={watchlistError}
+          regimeLabel={overview?.regime?.regime_label}
+          onAddSymbol={handleAddWatchlistSymbol}
+          onReorderSymbols={handlePersistWatchlist}
+          onRemoveSymbol={handleRemoveWatchlistSymbol}
+          onOpenStockDetail={(sym) => navigateView("stock", sym)}
+        />
+      ) : viewMode === "stock" ? (
+        <StockDetailView
+          symbol={activeStockSymbol}
+          isWatched={watchlistItems.some((x) => x.symbol === activeStockSymbol)}
+          onToggleWatchlist={handleToggleWatchlistSymbol}
+          onSelectOtherSymbol={(sym) => navigateView("stock", sym)}
+          onBackToOverview={() => navigateView("cockpit")}
+          onBackToWatchlist={() => navigateView("watchlist")}
+          onOpenAiDrawer={(sym) => {
+            setSelectedSymbol(sym);
+            setDrawerOpen(true);
+          }}
+          onOpenCopilot={(sym) => {
+            setSelectedSymbol(sym);
+            navigateView("copilot");
+          }}
+        />
       ) : viewMode === "copilot" ? (
-        <main className="mx-auto max-w-[1460px] px-4 pt-5 sm:px-6">
+        <main className="mx-auto w-full max-w-[1780px] px-4 pt-5 sm:px-6 lg:px-8">
           <InvestigatorDrawer
             open={true}
             mode="split"
@@ -441,17 +588,14 @@ export default function MarketCockpit() {
           />
         </main>
       ) : viewMode === "portfolio" ? (
-        <main className="mx-auto max-w-[1460px] px-4 pt-5 sm:px-6">
+        <main className="mx-auto w-full max-w-[1780px] px-4 pt-5 sm:px-6 lg:px-8">
           <PortfolioWatchdogView
-            onSelectSymbol={(sym) => {
-              setSelectedSymbol(sym);
-              setViewMode("cockpit");
-            }}
+            onSelectSymbol={(sym) => navigateView("stock", sym)}
             onAlertCountChange={setUnackedAlerts}
           />
         </main>
       ) : (
-        <main className="mx-auto max-w-[1460px] space-y-5 px-4 pt-5 sm:px-6">
+        <main className="mx-auto w-full max-w-[1780px] space-y-5 px-4 pt-5 sm:px-6 lg:px-8">
         {error && (
           <div className="flex items-center justify-between rounded-xl border border-rose-300 bg-rose-50 px-4 py-3 font-mono text-xs text-rose-800">
             <span className="flex items-center gap-2">
@@ -505,38 +649,38 @@ export default function MarketCockpit() {
                 <div className="space-y-4">
                   <div className="flex flex-wrap items-start justify-between gap-3">
                     <div>
-                      <div className="flex items-center gap-2 font-mono text-[10px] tracking-[0.16em] text-zinc-400">
-                        <Layers className="h-3.5 w-3.5" />
+                      <div className="flex items-center gap-2 font-mono text-xs font-semibold tracking-wider text-zinc-200">
+                        <Layers className="h-3.5 w-3.5 text-emerald-400" />
                         LAYER 01 · 宏观流动性与体制锚 (Macro Regime Anchor)
                       </div>
-                      <h1 className="mt-2 font-serif text-2xl tracking-tight text-white sm:text-3xl">
+                      <h1 className="mt-2 font-serif text-2xl font-medium tracking-tight text-white sm:text-3xl">
                         {formatRegimeLabel(overview?.regime?.regime_label)}
                       </h1>
                     </div>
-                    <div className="flex flex-col items-end gap-1 font-mono text-[11px]">
-                      <span className="rounded-full border border-zinc-700 bg-zinc-900 px-3 py-1 text-zinc-200">
+                    <div className="flex flex-col items-end gap-1 font-mono text-xs">
+                      <span className="rounded-full border border-zinc-600 bg-zinc-900 px-3 py-1 font-medium text-zinc-100">
                         压力 Stress {overview?.regime?.stress_score ?? 0} · 支撑 Support{" "}
                         {overview?.regime?.support_score ?? 0}
                       </span>
-                      <span className="text-[10px] text-zinc-500">
+                      <span className="text-xs text-zinc-300">
                         基准日 {overview?.regime_date ?? "—"} · 0-Token 规则计算
                       </span>
                     </div>
                   </div>
 
                   {/* Headline Metrics Strip */}
-                  <div className="grid grid-cols-2 gap-3 border-y border-zinc-800/90 py-3.5 sm:grid-cols-4">
+                  <div className="grid grid-cols-2 gap-3.5 border-y border-zinc-800/90 py-4 sm:grid-cols-4">
                     <div>
-                      <div className="font-mono text-[10px] tracking-wider text-zinc-500">
+                      <div className="font-mono text-xs font-medium text-zinc-300">
                         美联储净流动性 Net Liq
                       </div>
-                      <div className="mt-1 font-mono text-lg font-semibold tabular-nums text-white">
+                      <div className="mt-1 font-mono text-xl font-bold tabular-nums text-white">
                         {overview?.macro?.net_liquidity.latest_billions != null
                           ? `$${overview.macro.net_liquidity.latest_billions.toLocaleString()}B`
                           : "—"}
                       </div>
                       <div
-                        className={`font-mono text-[11px] tabular-nums ${deltaTone(
+                        className={`font-mono text-xs font-medium tabular-nums ${deltaTone(
                           overview?.macro?.net_liquidity.delta_20d_billions,
                           true
                         )}`}
@@ -546,38 +690,38 @@ export default function MarketCockpit() {
                     </div>
 
                     <div>
-                      <div className="font-mono text-[10px] tracking-wider text-zinc-500">
+                      <div className="font-mono text-xs font-medium text-zinc-300">
                         美债利差 10Y–2Y Curve
                       </div>
-                      <div className="mt-1 font-mono text-lg font-semibold tabular-nums text-white">
+                      <div className="mt-1 font-mono text-xl font-bold tabular-nums text-white">
                         {fmtSigned(overview?.macro?.yield_credit.yield_spread_10y2y, 2, "%")}
                       </div>
-                      <div className="font-mono text-[11px] tabular-nums text-zinc-400">
+                      <div className="font-mono text-xs tabular-nums text-zinc-200">
                         10Y {fmtNum(overview?.macro?.yield_credit.dgs10, 2, "%")} · 实际 Real{" "}
                         {fmtNum(overview?.macro?.yield_credit.dfii10, 2, "%")}
                       </div>
                     </div>
 
                     <div>
-                      <div className="font-mono text-[10px] tracking-wider text-zinc-500">
+                      <div className="font-mono text-xs font-medium text-zinc-300">
                         高收益利差 HY OAS
                       </div>
-                      <div className="mt-1 font-mono text-lg font-semibold tabular-nums text-white">
+                      <div className="mt-1 font-mono text-xl font-bold tabular-nums text-white">
                         {fmtNum(overview?.macro?.yield_credit.hy_oas, 2, "%")}
                       </div>
-                      <div className="font-mono text-[11px] text-zinc-400">
+                      <div className="font-mono text-xs text-zinc-200">
                         {formatCreditState(overview?.macro?.yield_credit.credit_state)}
                       </div>
                     </div>
 
                     <div>
-                      <div className="font-mono text-[10px] tracking-wider text-zinc-500">
+                      <div className="font-mono text-xs font-medium text-zinc-300">
                         波动期限比 VIX/VIX3M
                       </div>
-                      <div className="mt-1 font-mono text-lg font-semibold tabular-nums text-white">
+                      <div className="mt-1 font-mono text-xl font-bold tabular-nums text-white">
                         {fmtNum(overview?.macro?.vix_structure.vix_vix3m_ratio, 3)}
                       </div>
-                      <div className="font-mono text-[11px] text-zinc-400">
+                      <div className="font-mono text-xs text-zinc-200">
                         {VIX_STATE_BI[overview?.macro?.vix_structure.structure_state ?? ""] ??
                           overview?.macro?.vix_structure.structure_state ??
                           "—"}
@@ -590,7 +734,7 @@ export default function MarketCockpit() {
                     {(overview?.regime?.drivers ?? []).map((driver) => (
                       <span
                         key={driver}
-                        className="rounded-md border border-zinc-800 bg-zinc-900/70 px-2.5 py-1 font-mono text-[11px] text-zinc-300"
+                        className="rounded-lg border border-zinc-700 bg-zinc-900/80 px-2.5 py-1 font-mono text-xs text-zinc-100"
                       >
                         {formatDriverText(driver)}
                       </span>
@@ -600,8 +744,8 @@ export default function MarketCockpit() {
 
                 {/* Fed Net Liquidity ECharts Area */}
                 <div className="mt-4">
-                  <div className="mb-1 flex items-center justify-between font-mono text-[10px] text-zinc-500">
-                    <span>WALCL – WTREGEN – RRPONTSYD (90-Obs Trajectory, USD Billions)</span>
+                  <div className="mb-1 flex items-center justify-between font-mono text-xs text-zinc-300">
+                    <span>WALCL – WTREGEN – RRPONTSYD (90-Obs, USD Billions)</span>
                     <span>Updated {overview?.macro?.net_liquidity.latest_date ?? "—"}</span>
                   </div>
                   <NetLiquidityChart
@@ -615,38 +759,38 @@ export default function MarketCockpit() {
               <SpotlightBlock tone="gallery" className="flex flex-col justify-between p-6 lg:col-span-5">
                 <div className="space-y-4">
                   <div className="flex flex-wrap items-center justify-between gap-2">
-                    <div className="font-mono text-[10px] tracking-[0.16em] text-zinc-500 dark:text-zinc-400">
+                    <div className="font-mono text-xs font-semibold tracking-wider text-zinc-700 dark:text-zinc-200">
                       LAYER 02 &amp; 05 · 波动率期限与市场情绪 (Vol &amp; Sentiment)
                     </div>
-                    <span className="shrink-0 whitespace-nowrap rounded-full border border-zinc-200/80 bg-white/70 px-2.5 py-0.5 font-mono text-[10px] text-zinc-600 dark:border-white/10 dark:bg-white/[0.06] dark:text-zinc-300">
+                    <span className="shrink-0 whitespace-nowrap rounded-full border border-zinc-300 bg-white px-2.5 py-0.5 font-mono text-xs font-medium text-zinc-800 dark:border-white/20 dark:bg-white/[0.08] dark:text-zinc-100">
                       5 维合成模型 · 5-Pillar
                     </span>
                   </div>
 
                   {/* Fear & Greed Editorial Meter */}
-                  <div className="rounded-xl border border-zinc-200/80 bg-white/55 p-4 backdrop-blur-md dark:border-white/10 dark:bg-white/[0.03]">
-                    <div className="flex items-baseline justify-between">
+                  <div className="rounded-xl border border-zinc-200 bg-white/80 p-4 dark:border-white/15 dark:bg-white/[0.04]">
+                    <div className="flex items-baseline justify-between gap-2">
                       <div>
-                        <div className="font-mono text-[10px] tracking-wider text-zinc-500 dark:text-zinc-400">
+                        <div className="font-mono text-xs font-medium text-zinc-700 dark:text-zinc-200">
                           自研恐慌贪婪指数 Fear &amp; Greed Index
                         </div>
                         <div className="mt-1 flex items-baseline gap-2.5">
                           <span className="font-mono text-3xl font-bold tabular-nums text-zinc-950 dark:text-white">
                             {fmtNum(overview?.regime?.fear_greed.score, 1)}
                           </span>
-                          <span className="font-serif text-lg italic text-zinc-700 dark:text-zinc-300">
+                          <span className="font-serif text-lg font-medium italic text-zinc-800 dark:text-zinc-200">
                             {SENTIMENT_BI[overview?.regime?.fear_greed.label ?? ""] ??
                               overview?.regime?.fear_greed.label ??
                               "Unavailable"}
                           </span>
                         </div>
                       </div>
-                      <span className="font-mono text-[10px] text-zinc-400 dark:text-zinc-500">
-                        0 极恐 Fear · 100 极贪 Greed
+                      <span className="font-mono text-xs font-medium text-zinc-700 dark:text-zinc-300">
+                        0 极恐 · 100 极贪
                       </span>
                     </div>
 
-                    <div className="mt-3 h-2 w-full overflow-hidden rounded-full bg-zinc-200 dark:bg-white/10">
+                    <div className="mt-3 h-2 w-full overflow-hidden rounded-full bg-zinc-200 dark:bg-white/15">
                       <div
                         className="h-full rounded-full bg-zinc-950 transition-all duration-700 dark:bg-zinc-100"
                         style={{
@@ -659,10 +803,10 @@ export default function MarketCockpit() {
                       {Object.entries(overview?.regime?.fear_greed.components ?? {}).map(
                         ([pillar, score]) => (
                           <div key={pillar} className="text-center">
-                            <div className="font-mono text-[11px] font-semibold tabular-nums text-zinc-900 dark:text-zinc-100">
+                            <div className="font-mono text-sm font-bold tabular-nums text-zinc-950 dark:text-zinc-50">
                               {score !== null && score !== undefined ? score.toFixed(0) : "—"}
                             </div>
-                            <div className="truncate font-mono text-[9px] text-zinc-500 dark:text-zinc-400">
+                            <div className="truncate font-mono text-xs font-medium text-zinc-700 dark:text-zinc-300">
                               {PILLAR_BI[pillar] ?? pillar.replace("_", " ")}
                             </div>
                           </div>
@@ -673,9 +817,9 @@ export default function MarketCockpit() {
 
                   {/* VIX Term Curve */}
                   <div>
-                    <div className="mb-2 flex items-center justify-between font-mono text-[10px] tracking-wider text-zinc-500 dark:text-zinc-400">
+                    <div className="mb-2 flex items-center justify-between font-mono text-xs font-medium text-zinc-700 dark:text-zinc-300">
                       <span>CBOE 波动率期限结构 (VIX Curve)</span>
-                      <span className="text-zinc-800 dark:text-zinc-200">
+                      <span className="font-semibold text-zinc-950 dark:text-zinc-100">
                         {VIX_STATE_BI[overview?.macro?.vix_structure.structure_state ?? ""] ??
                           overview?.macro?.vix_structure.structure_state ??
                           "—"}
@@ -689,10 +833,12 @@ export default function MarketCockpit() {
                       ].map((v) => (
                         <div
                           key={v.label}
-                          className="rounded-xl border border-zinc-200/80 bg-white/70 px-3 py-2.5 backdrop-blur-md transition-colors group-hover/panel:border-zinc-300/90 dark:border-white/10 dark:bg-white/[0.04] dark:group-hover/panel:border-white/20"
+                          className="rounded-xl border border-zinc-200 bg-white/85 px-3 py-2.5 dark:border-white/15 dark:bg-white/[0.05]"
                         >
-                          <div className="font-mono text-[10px] text-zinc-500 dark:text-zinc-400">{v.label}</div>
-                          <div className="mt-0.5 font-mono text-base font-semibold tabular-nums text-zinc-950 dark:text-white">
+                          <div className="font-mono text-xs font-medium text-zinc-700 dark:text-zinc-300">
+                            {v.label}
+                          </div>
+                          <div className="mt-0.5 font-mono text-lg font-bold tabular-nums text-zinc-950 dark:text-white">
                             {fmtNum(v.val, 2)}
                           </div>
                         </div>
@@ -701,30 +847,30 @@ export default function MarketCockpit() {
                   </div>
 
                   {/* Funding & Credit Plumbing Table */}
-                  <div className="grid grid-cols-2 gap-x-4 gap-y-2 border-t border-zinc-200/80 pt-3 font-mono text-xs tabular-nums dark:border-white/10">
+                  <div className="grid grid-cols-2 gap-x-4 gap-y-2 border-t border-zinc-200 pt-3 font-mono text-xs tabular-nums dark:border-white/15">
                     <div className="flex justify-between">
-                      <span className="text-zinc-500 dark:text-zinc-400">SOFR 隔夜利率</span>
-                      <span className="font-medium text-zinc-950 dark:text-zinc-100">
+                      <span className="font-medium text-zinc-700 dark:text-zinc-300">SOFR 隔夜利率</span>
+                      <span className="font-bold text-zinc-950 dark:text-zinc-50">
                         {fmtNum(overview?.macro?.yield_credit.sofr, 2, "%")}
                       </span>
                     </div>
                     <div className="flex justify-between">
-                      <span className="text-zinc-500 dark:text-zinc-400">银行准备金 Reserves</span>
-                      <span className="font-medium text-zinc-950 dark:text-zinc-100">
+                      <span className="font-medium text-zinc-700 dark:text-zinc-300">银行准备金</span>
+                      <span className="font-bold text-zinc-950 dark:text-zinc-50">
                         {overview?.macro?.yield_credit.wresbal_billions != null
                           ? `$${overview.macro.yield_credit.wresbal_billions.toLocaleString()}B`
                           : "—"}
                       </span>
                     </div>
                     <div className="flex justify-between">
-                      <span className="text-zinc-500 dark:text-zinc-400">投资级利差 IG OAS</span>
-                      <span className="font-medium text-zinc-950 dark:text-zinc-100">
+                      <span className="font-medium text-zinc-700 dark:text-zinc-300">投资级 IG OAS</span>
+                      <span className="font-bold text-zinc-950 dark:text-zinc-50">
                         {fmtNum(overview?.macro?.yield_credit.ig_oas, 2, "%")}
                       </span>
                     </div>
                     <div className="flex justify-between">
-                      <span className="text-zinc-500 dark:text-zinc-400">HYG / LQD (20D)</span>
-                      <span className="font-medium text-zinc-950 dark:text-zinc-100">
+                      <span className="font-medium text-zinc-700 dark:text-zinc-300">HYG / LQD</span>
+                      <span className="font-bold text-zinc-950 dark:text-zinc-50">
                         {fmtNum(overview?.macro?.yield_credit.hyg_lqd_ratio, 3)}{" "}
                         <span
                           className={deltaTone(
@@ -740,9 +886,9 @@ export default function MarketCockpit() {
 
                   {/* 30-Day Regime & Fear/Greed Trajectory Strip */}
                   {regimeHistory.length > 0 && (
-                    <div className="border-t border-zinc-200/80 pt-3 dark:border-white/10">
-                      <div className="mb-1.5 flex items-center justify-between font-mono text-[10px] text-zinc-500 dark:text-zinc-400">
-                        <span>近 {regimeHistory.length} 日情绪与体制轨迹 (Fear &amp; Greed Track)</span>
+                    <div className="border-t border-zinc-200 pt-3 dark:border-white/15">
+                      <div className="mb-1.5 flex items-center justify-between font-mono text-xs font-medium text-zinc-700 dark:text-zinc-300">
+                        <span>近 {regimeHistory.length} 日情绪与体制轨迹</span>
                         <span>最新 {regimeHistory[regimeHistory.length - 1]?.regime_date}</span>
                       </div>
                       <div className="flex h-10 items-end gap-1">
@@ -781,38 +927,38 @@ export default function MarketCockpit() {
               <SpotlightBlock tone="gallery" className="flex flex-col justify-between p-6 lg:col-span-5">
                 <div className="space-y-4">
                   <div className="flex flex-wrap items-center justify-between gap-2">
-                    <div className="font-mono text-[10px] tracking-[0.16em] text-zinc-500 dark:text-zinc-400">
+                    <div className="font-mono text-xs font-semibold tracking-wider text-zinc-700 dark:text-zinc-200">
                       LAYER 03 · 核心指数与市场广度 (Core &amp; Breadth)
                     </div>
-                    <span className="shrink-0 font-mono text-[10px] text-zinc-400 dark:text-zinc-500">
-                      点击行切换 K 线 · Click row
+                    <span className="shrink-0 font-mono text-xs font-medium text-zinc-700 dark:text-zinc-300">
+                      点击行切换右侧 K 线
                     </span>
                   </div>
 
                   {/* Breadth Summary Pills */}
-                  <div className="grid grid-cols-3 gap-2">
-                    <div className="rounded-xl border border-zinc-200/80 bg-white/60 p-2.5 backdrop-blur-md dark:border-white/10 dark:bg-white/[0.04]">
-                      <div className="font-mono text-[10px] text-zinc-500 dark:text-zinc-400">
-                        站上 50日线 &gt;50MA
+                  <div className="grid grid-cols-3 gap-2.5">
+                    <div className="rounded-xl border border-zinc-200 bg-white/85 p-3 dark:border-white/15 dark:bg-white/[0.05]">
+                      <div className="font-mono text-xs font-medium text-zinc-700 dark:text-zinc-300">
+                        站上 50 日线
                       </div>
-                      <div className="mt-0.5 font-mono text-base font-semibold tabular-nums text-zinc-950 dark:text-white">
+                      <div className="mt-1 font-mono text-lg font-bold tabular-nums text-zinc-950 dark:text-white">
                         {fmtNum(overview?.equities?.breadth.pct_above_50ma, 1, "%")}
                       </div>
                     </div>
-                    <div className="rounded-xl border border-zinc-200/80 bg-white/60 p-2.5 backdrop-blur-md dark:border-white/10 dark:bg-white/[0.04]">
-                      <div className="font-mono text-[10px] text-zinc-500 dark:text-zinc-400">
-                        站上 200日线 &gt;200MA
+                    <div className="rounded-xl border border-zinc-200 bg-white/85 p-3 dark:border-white/15 dark:bg-white/[0.05]">
+                      <div className="font-mono text-xs font-medium text-zinc-700 dark:text-zinc-300">
+                        站上 200 日线
                       </div>
-                      <div className="mt-0.5 font-mono text-base font-semibold tabular-nums text-zinc-950 dark:text-white">
+                      <div className="mt-1 font-mono text-lg font-bold tabular-nums text-zinc-950 dark:text-white">
                         {fmtNum(overview?.equities?.breadth.pct_above_200ma, 1, "%")}
                       </div>
                     </div>
-                    <div className="rounded-xl border border-zinc-200/80 bg-white/60 p-2.5 backdrop-blur-md dark:border-white/10 dark:bg-white/[0.04]">
-                      <div className="font-mono text-[10px] text-zinc-500 dark:text-zinc-400">
-                        等权强弱 RSP/SPY
+                    <div className="rounded-xl border border-zinc-200 bg-white/85 p-3 dark:border-white/15 dark:bg-white/[0.05]">
+                      <div className="font-mono text-xs font-medium text-zinc-700 dark:text-zinc-300">
+                        等权 RSP/SPY
                       </div>
                       <div
-                        className={`mt-0.5 font-mono text-base font-semibold tabular-nums ${deltaTone(
+                        className={`mt-1 font-mono text-lg font-bold tabular-nums ${deltaTone(
                           overview?.equities?.breadth.rsp_spy_20d_delta_pct,
                           false
                         )}`}
@@ -824,18 +970,18 @@ export default function MarketCockpit() {
 
                   {/* Core Indices Table */}
                   <div className="overflow-x-auto">
-                    <table className="w-full text-left font-mono text-xs tabular-nums">
+                    <table className="w-full text-left font-mono text-[13px] tabular-nums">
                       <thead>
-                        <tr className="border-b border-zinc-200/80 text-[10px] uppercase text-zinc-500 dark:border-white/10 dark:text-zinc-400">
-                          <th className="py-2 font-medium">Ticker</th>
-                          <th className="py-2 text-right font-medium">Close</th>
-                          <th className="py-2 text-right font-medium">1D</th>
-                          <th className="py-2 text-right font-medium">20D</th>
-                          <th className="py-2 text-right font-medium">RSI14</th>
-                          <th className="py-2 text-right font-medium">RVOL</th>
+                        <tr className="border-b border-zinc-200 text-xs font-semibold uppercase text-zinc-700 dark:border-white/15 dark:text-zinc-300">
+                          <th className="py-2">Ticker</th>
+                          <th className="py-2 text-right">Close</th>
+                          <th className="py-2 text-right">1D</th>
+                          <th className="py-2 text-right">20D</th>
+                          <th className="py-2 text-right">RSI14</th>
+                          <th className="py-2 text-right">RVOL</th>
                         </tr>
                       </thead>
-                      <tbody className="divide-y divide-zinc-200/60 dark:divide-white/10">
+                      <tbody className="divide-y divide-zinc-200/70 dark:divide-white/10">
                         {Object.entries(overview?.equities?.core_indices ?? {}).map(
                           ([sym, tech]) => {
                             const active = selectedSymbol === sym;
@@ -845,12 +991,12 @@ export default function MarketCockpit() {
                                 onClick={() => setSelectedSymbol(sym)}
                                 className={`cursor-pointer transition-colors ${
                                   active
-                                    ? "bg-zinc-950 text-white dark:bg-white/[0.14] dark:text-white dark:ring-1 dark:ring-inset dark:ring-white/25"
+                                    ? "bg-zinc-950 text-white dark:bg-white/[0.16] dark:text-white dark:ring-1 dark:ring-inset dark:ring-white/30"
                                     : "text-zinc-900 hover:bg-zinc-900/[0.04] dark:text-zinc-100 dark:hover:bg-white/[0.06]"
                                 }`}
                               >
-                                <td className="py-2.5 pl-2 font-semibold">{sym}</td>
-                                <td className="py-2.5 text-right">
+                                <td className="py-2.5 pl-2 font-bold">{sym}</td>
+                                <td className="py-2.5 text-right font-semibold">
                                   {tech.last_close != null
                                     ? sym === "BTCUSDT"
                                       ? `$${tech.last_close.toLocaleString(undefined, { maximumFractionDigits: 0 })}`
@@ -858,7 +1004,7 @@ export default function MarketCockpit() {
                                     : "—"}
                                 </td>
                                 <td
-                                  className={`py-2.5 text-right ${deltaTone(
+                                  className={`py-2.5 text-right font-semibold ${deltaTone(
                                     tech.change_1d_pct,
                                     active || theme === "dark"
                                   )}`}
@@ -866,7 +1012,7 @@ export default function MarketCockpit() {
                                   {fmtSigned(tech.change_1d_pct, 2, "%")}
                                 </td>
                                 <td
-                                  className={`py-2.5 text-right ${deltaTone(
+                                  className={`py-2.5 text-right font-semibold ${deltaTone(
                                     tech.change_20d_pct,
                                     active || theme === "dark"
                                   )}`}
@@ -886,33 +1032,35 @@ export default function MarketCockpit() {
                   </div>
                 </div>
 
-                {/* Global Search Any US Ticker + Filtered Watchlist */}
-                <div className="mt-4 space-y-2.5 border-t border-zinc-200/80 pt-3 dark:border-white/10">
-                  <form onSubmit={handleGlobalTickerSearch} className="flex gap-1.5">
+                {/* Global Search Any US Ticker + Filtered Asset Universe */}
+                <div className="mt-4 space-y-3 border-t border-zinc-200 pt-3.5 dark:border-white/15">
+                  <form onSubmit={handleGlobalTickerSearch} className="flex gap-2">
                     <div className="relative flex-1">
-                      <Search className="pointer-events-none absolute top-1/2 left-2.5 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400" />
+                      <Search className="pointer-events-none absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2 text-zinc-600 dark:text-zinc-300" />
                       <input
                         type="text"
                         value={tickerSearchInput}
                         onChange={(e) => setTickerSearchInput(e.target.value.toUpperCase())}
-                        placeholder="输入任意美股代码直查 K 线/GEX/EPS，如 AMD, PLTR, TSM..."
-                        className="w-full rounded-lg border border-zinc-300/90 bg-white/80 py-1.5 pr-2 pl-8 font-mono text-[11px] uppercase text-zinc-950 backdrop-blur-md placeholder:normal-case placeholder:text-zinc-400 focus:border-zinc-950 focus:outline-none dark:border-white/15 dark:bg-white/[0.05] dark:text-white dark:focus:border-white/50"
+                        placeholder="输入美股代码查 K 线/GEX/EPS，如 AMD, PLTR, TSM..."
+                        className="w-full rounded-xl border border-zinc-300 bg-white/90 py-2 pr-3 pl-9 font-mono text-xs uppercase text-zinc-950 placeholder:normal-case placeholder:text-zinc-500 focus:border-zinc-950 focus:outline-none dark:border-white/15 dark:bg-white/[0.06] dark:text-white dark:placeholder:text-zinc-400"
                       />
                     </div>
                     <button
                       type="submit"
                       disabled={searchingTicker || !tickerSearchInput.trim()}
-                      className="rounded-lg bg-zinc-950 px-3 py-1.5 font-mono text-[11px] font-medium text-white transition hover:bg-zinc-800 disabled:opacity-40 dark:bg-white dark:text-zinc-950 dark:hover:bg-zinc-200"
+                      className="rounded-xl bg-zinc-950 px-3.5 py-2 font-mono text-xs font-semibold text-white transition hover:bg-zinc-800 disabled:opacity-40 dark:bg-white dark:text-zinc-950"
                     >
                       {searchingTicker ? "拉取中..." : "调入看盘"}
                     </button>
                   </form>
                   {tickerSearchError && (
-                    <p className="font-mono text-[10px] text-rose-600 dark:text-rose-400">{tickerSearchError}</p>
+                    <p className="font-mono text-xs font-medium text-rose-700 dark:text-rose-300">
+                      {tickerSearchError}
+                    </p>
                   )}
 
-                  <div className="flex flex-wrap items-center justify-between gap-2 font-mono text-[10px] text-zinc-500 dark:text-zinc-400">
-                    <span>观测资产池 Watchlist ({filteredWatchlist.length})</span>
+                  <div className="flex flex-wrap items-center justify-between gap-2 font-mono text-xs text-zinc-700 dark:text-zinc-200">
+                    <span className="font-semibold">全市场资产池 ({filteredWatchlist.length})</span>
                     <div className="flex items-center gap-1">
                       {(
                         [
@@ -925,10 +1073,10 @@ export default function MarketCockpit() {
                           key={f.id}
                           type="button"
                           onClick={() => setWatchlistFilter(f.id)}
-                          className={`rounded px-1.5 py-0.5 transition ${
+                          className={`rounded-md px-2 py-0.5 font-medium transition ${
                             watchlistFilter === f.id
                               ? "bg-zinc-950 text-white dark:bg-white dark:text-zinc-950"
-                              : "bg-zinc-100/80 text-zinc-600 hover:bg-zinc-200 dark:bg-white/[0.06] dark:text-zinc-300 dark:hover:bg-white/[0.12]"
+                              : "bg-zinc-200/80 text-zinc-800 hover:bg-zinc-300 dark:bg-white/[0.08] dark:text-zinc-200"
                           }`}
                         >
                           {f.label}
@@ -939,7 +1087,7 @@ export default function MarketCockpit() {
                         onClick={() =>
                           setWatchlistSort((s) => (s === "alpha" ? "chg_desc" : "alpha"))
                         }
-                        className="rounded border border-zinc-200/80 px-1.5 py-0.5 text-zinc-600 hover:bg-zinc-100 dark:border-white/15 dark:text-zinc-300 dark:hover:bg-white/[0.08]"
+                        className="rounded-md border border-zinc-300 px-2 py-0.5 font-medium text-zinc-800 hover:bg-zinc-100 dark:border-white/20 dark:text-zinc-200"
                       >
                         {watchlistSort === "alpha" ? "A→Z" : "涨幅↓"}
                       </button>
@@ -952,13 +1100,13 @@ export default function MarketCockpit() {
                         key={a.symbol}
                         type="button"
                         onClick={() => setSelectedSymbol(a.symbol)}
-                        className={`inline-flex items-center gap-1 rounded border px-1.5 py-0.5 font-mono text-[10px] transition ${
+                        className={`inline-flex items-center gap-1.5 rounded-md border px-2 py-1 font-mono text-xs font-medium transition ${
                           selectedSymbol === a.symbol
-                            ? "border-zinc-950 bg-zinc-950 text-white dark:border-white/40 dark:bg-white dark:text-zinc-950"
-                            : "border-zinc-200/80 bg-white/70 text-zinc-700 hover:border-zinc-400 dark:border-white/10 dark:bg-white/[0.04] dark:text-zinc-200 dark:hover:border-white/30"
+                            ? "border-zinc-950 bg-zinc-950 text-white dark:border-white/50 dark:bg-white dark:text-zinc-950"
+                            : "border-zinc-200 bg-white/85 text-zinc-900 hover:border-zinc-400 dark:border-white/15 dark:bg-white/[0.05] dark:text-zinc-100"
                         }`}
                       >
-                        <span>{a.symbol}</span>
+                        <span className="font-semibold">{a.symbol}</span>
                         {a.change_1d_pct !== null && (
                           <span
                             className={deltaTone(a.change_1d_pct, selectedSymbol === a.symbol && theme !== "dark")}
@@ -978,15 +1126,15 @@ export default function MarketCockpit() {
                 <div className="space-y-3">
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <div>
-                      <div className="flex items-center gap-2 font-mono text-[10px] tracking-[0.16em] text-zinc-400">
-                        <Activity className="h-3.5 w-3.5" />
+                      <div className="flex items-center gap-2 font-mono text-xs font-semibold tracking-wider text-zinc-200">
+                        <Activity className="h-3.5 w-3.5 text-emerald-400" />
                         LAYER 04 · 个股微观量价与均线 (Micro Structure)
                       </div>
                       <div className="mt-1 flex flex-wrap items-baseline gap-3">
-                        <h2 className="font-serif text-2xl text-white sm:text-3xl">
+                        <h2 className="font-serif text-2xl font-medium text-white sm:text-3xl">
                           {selectedSymbol}
                         </h2>
-                        <span className="font-mono text-lg font-semibold tabular-nums text-white">
+                        <span className="font-mono text-xl font-bold tabular-nums text-white">
                           {assetDetail?.technicals.last_close != null
                             ? `$${assetDetail.technicals.last_close.toLocaleString(undefined, {
                                 minimumFractionDigits: 2,
@@ -995,7 +1143,7 @@ export default function MarketCockpit() {
                             : "—"}
                         </span>
                         <span
-                          className={`font-mono text-xs tabular-nums ${deltaTone(
+                          className={`font-mono text-xs font-semibold tabular-nums ${deltaTone(
                             assetDetail?.technicals.change_1d_pct,
                             true
                           )}`}
@@ -1006,63 +1154,70 @@ export default function MarketCockpit() {
                     </div>
 
                     <div className="flex flex-wrap items-center gap-2">
-                      <span className="rounded-md border border-zinc-800 bg-zinc-900 px-2.5 py-1 font-mono text-[10px] text-zinc-300">
+                      <span className="rounded-md border border-zinc-700 bg-zinc-900 px-2.5 py-1 font-mono text-xs text-zinc-100">
                         {formatVolumePriceTag(assetDetail?.technicals.volume_price_tag)}
                       </span>
                       <button
                         type="button"
+                        onClick={() => navigateView("stock", selectedSymbol)}
+                        className="inline-flex items-center gap-1 rounded-full bg-white px-3 py-1 font-mono text-xs font-semibold text-zinc-950 transition hover:bg-zinc-200"
+                      >
+                        个股详情 <ArrowRight className="h-3 w-3" />
+                      </button>
+                      <button
+                        type="button"
                         onClick={() => setDrawerOpen(true)}
-                        className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/35 bg-emerald-500/10 px-2.5 py-1 font-mono text-[10px] font-medium text-emerald-300 transition hover:border-emerald-400/60 hover:bg-emerald-500/20"
+                        className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/50 bg-emerald-500/15 px-3 py-1 font-mono text-xs font-medium text-emerald-300 transition hover:bg-emerald-500/25"
                       >
                         <Sparkles className="h-3 w-3" />
-                        AI 协查 {selectedSymbol}
+                        AI 协查
                       </button>
                     </div>
                   </div>
 
                   {/* Single-line Technicals Telemetry Strip */}
-                  <div className="grid grid-cols-3 gap-2 rounded-xl border border-zinc-800/80 bg-zinc-950/60 p-2.5 font-mono text-[11px] tabular-nums sm:grid-cols-6">
+                  <div className="grid grid-cols-3 gap-2.5 rounded-xl border border-zinc-800 bg-zinc-950/75 p-3 font-mono text-xs tabular-nums sm:grid-cols-6">
                     <div>
-                      <span className="block text-[9px] uppercase text-zinc-500">RSI(14)</span>
-                      <span className="text-zinc-100">
+                      <span className="block text-xs text-zinc-300">RSI(14)</span>
+                      <span className="mt-0.5 block text-sm font-bold text-white">
                         {fmtNum(assetDetail?.technicals.rsi_14, 1)}
                       </span>
                     </div>
                     <div>
-                      <span className="block text-[9px] uppercase text-zinc-500">RVOL(20)</span>
-                      <span className="text-zinc-100">
+                      <span className="block text-xs text-zinc-300">RVOL(20)</span>
+                      <span className="mt-0.5 block text-sm font-bold text-white">
                         {fmtNum(assetDetail?.technicals.rvol_20, 2, "x")}
                       </span>
                     </div>
                     <div>
-                      <span className="block text-[9px] uppercase text-zinc-500">ATR(14)</span>
-                      <span className="text-zinc-100">
+                      <span className="block text-xs text-zinc-300">ATR(14)</span>
+                      <span className="mt-0.5 block text-sm font-bold text-white">
                         {fmtNum(assetDetail?.technicals.atr_pct, 2, "%")}
                       </span>
                     </div>
                     <div>
-                      <span className="block text-[9px] uppercase text-zinc-500">距50日线 Dist 50MA</span>
+                      <span className="block text-xs text-zinc-300">距 50 日线</span>
                       <span
-                        className={deltaTone(assetDetail?.technicals.dist_50ma_pct, true)}
+                        className={`mt-0.5 block text-sm font-bold ${deltaTone(assetDetail?.technicals.dist_50ma_pct, true)}`}
                       >
                         {fmtSigned(assetDetail?.technicals.dist_50ma_pct, 2, "%")}
                       </span>
                     </div>
                     <div>
-                      <span className="block text-[9px] uppercase text-zinc-500">距200日线 Dist 200MA</span>
+                      <span className="block text-xs text-zinc-300">距 200 日线</span>
                       <span
-                        className={deltaTone(assetDetail?.technicals.dist_200ma_pct, true)}
+                        className={`mt-0.5 block text-sm font-bold ${deltaTone(assetDetail?.technicals.dist_200ma_pct, true)}`}
                       >
                         {fmtSigned(assetDetail?.technicals.dist_200ma_pct, 2, "%")}
                       </span>
                     </div>
                     <div>
-                      <span className="block text-[9px] uppercase text-zinc-500">MACD Hist</span>
+                      <span className="block text-xs text-zinc-300">MACD 柱</span>
                       <span
-                        className={deltaTone(
+                        className={`mt-0.5 block text-sm font-bold ${deltaTone(
                           assetDetail?.technicals.macd?.histogram,
                           true
-                        )}
+                        )}`}
                       >
                         {fmtSigned(assetDetail?.technicals.macd?.histogram, 3)}
                       </span>
@@ -1071,7 +1226,7 @@ export default function MarketCockpit() {
 
                   {/* TradingView Lightweight Charts */}
                   {assetLoading && !assetDetail ? (
-                    <div className="flex h-[320px] items-center justify-center rounded-xl border border-zinc-800 font-mono text-xs text-zinc-500">
+                    <div className="flex h-[320px] items-center justify-center rounded-xl border border-zinc-800 font-mono text-sm text-zinc-200">
                       Loading {selectedSymbol} consolidated OHLCV...
                     </div>
                   ) : (
@@ -1090,11 +1245,11 @@ export default function MarketCockpit() {
                   (assetDetail?.recommendations && assetDetail.recommendations.length > 0)) && (
                   <div className="mt-3 grid grid-cols-1 gap-2.5 border-t border-zinc-800 pt-3 sm:grid-cols-2">
                     {assetDetail?.options_gex && (
-                      <div className="rounded-xl border border-zinc-800 bg-zinc-950/70 p-2.5 font-mono text-[11px]">
-                        <div className="text-[10px] text-zinc-400">
+                      <div className="rounded-xl border border-zinc-800 bg-zinc-950/75 p-3 font-mono text-xs">
+                        <div className="font-medium text-zinc-200">
                           {selectedSymbol} 估算期权墙 (Estimated GEX)
                         </div>
-                        <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 tabular-nums">
+                        <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 font-semibold tabular-nums">
                           <span className={deltaTone(assetDetail.options_gex.net_gex, true)}>
                             Net {fmtBillions(assetDetail.options_gex.net_gex)}
                           </span>
@@ -1104,7 +1259,7 @@ export default function MarketCockpit() {
                           <span className="text-rose-400">
                             Put ${assetDetail.options_gex.put_wall?.toFixed(0) ?? "—"}
                           </span>
-                          <span className="text-amber-400">
+                          <span className="text-amber-300">
                             ZG ${assetDetail.options_gex.zero_gamma?.toFixed(2) ?? "—"}
                           </span>
                         </div>
@@ -1112,28 +1267,28 @@ export default function MarketCockpit() {
                     )}
 
                     {assetDetail?.eps_history && assetDetail.eps_history.length > 0 && (
-                      <div className="rounded-xl border border-zinc-800 bg-zinc-950/70 p-2.5 font-mono text-[11px]">
-                        <div className="flex items-center justify-between text-[10px] text-zinc-400">
-                          <span>Finnhub 季度 EPS 实际 vs 预期</span>
+                      <div className="rounded-xl border border-zinc-800 bg-zinc-950/75 p-3 font-mono text-xs">
+                        <div className="flex items-center justify-between font-medium text-zinc-200">
+                          <span>季度 EPS 实际 vs 预期</span>
                           {assetDetail.recommendations?.[0] && (
-                            <span className="text-zinc-300">
-                              评级 买{assetDetail.recommendations[0].strong_buy + assetDetail.recommendations[0].buy}/持{assetDetail.recommendations[0].hold}/卖{assetDetail.recommendations[0].sell + assetDetail.recommendations[0].strong_sell}
+                            <span className="text-zinc-100">
+                              买{assetDetail.recommendations[0].strong_buy + assetDetail.recommendations[0].buy}/持{assetDetail.recommendations[0].hold}/卖{assetDetail.recommendations[0].sell + assetDetail.recommendations[0].strong_sell}
                             </span>
                           )}
                         </div>
-                        <div className="mt-1 grid grid-cols-2 gap-1.5 text-[10px] tabular-nums">
+                        <div className="mt-1.5 grid grid-cols-2 gap-2 text-xs tabular-nums">
                           {assetDetail.eps_history.slice(0, 2).map((ep) => (
                             <div key={ep.period} className="rounded bg-zinc-900 px-2 py-1">
-                              <span className="text-zinc-400">{ep.period.slice(0, 7)} </span>
-                              <span className="text-white">
+                              <span className="text-zinc-200">{ep.period.slice(0, 7)} </span>
+                              <span className="font-bold text-white">
                                 {ep.actual !== null ? `$${ep.actual.toFixed(2)}` : "—"}
                               </span>
-                              <span className="text-zinc-500">
+                              <span className="text-zinc-300">
                                 {" "}
-                                / Est {ep.estimate !== null ? `$${ep.estimate.toFixed(2)}` : "—"}
+                                / {ep.estimate !== null ? `$${ep.estimate.toFixed(2)}` : "—"}
                               </span>
                               {ep.surprise_percent !== null && (
-                                <span className={` ml-1 ${deltaTone(ep.surprise_percent, true)}`}>
+                                <span className={`ml-1 font-semibold ${deltaTone(ep.surprise_percent, true)}`}>
                                   ({ep.surprise_percent >= 0 ? "+" : ""}
                                   {ep.surprise_percent.toFixed(1)}%)
                                 </span>
@@ -1149,20 +1304,20 @@ export default function MarketCockpit() {
                 {/* Compact News Strip (if available from Alpaca) */}
                 {assetDetail?.news && assetDetail.news.length > 0 && (
                   <div className="mt-3 border-t border-zinc-800 pt-3">
-                    <div className="mb-1.5 flex items-center gap-1.5 font-mono text-[10px] tracking-wider text-zinc-500">
-                      <Newspaper className="h-3 w-3" />
+                    <div className="mb-1.5 flex items-center gap-1.5 font-mono text-xs font-medium text-zinc-200">
+                      <Newspaper className="h-3.5 w-3.5" />
                       最新财经快讯 Headlines ({selectedSymbol})
                     </div>
-                    <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
+                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                       {assetDetail.news.slice(0, 2).map((n) => (
                         <a
                           key={n.id}
                           href={n.url}
                           target="_blank"
                           rel="noreferrer"
-                          className="truncate rounded-lg border border-zinc-800/80 bg-zinc-900/50 px-2.5 py-1.5 text-xs text-zinc-300 transition hover:border-zinc-600 hover:text-white"
+                          className="truncate rounded-lg border border-zinc-800 bg-zinc-900/70 px-3 py-2 text-xs text-zinc-100 transition hover:border-zinc-500 hover:text-white"
                         >
-                          <span className="mr-1.5 font-mono text-[10px] text-zinc-500">
+                          <span className="mr-2 font-mono font-semibold text-zinc-300">
                             {n.source}
                           </span>
                           {n.headline}
@@ -1185,25 +1340,25 @@ export default function MarketCockpit() {
               <SpotlightBlock tone="gallery" tilt="subtle" className="p-6 lg:col-span-7">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>
-                    <div className="flex items-center gap-2 font-mono text-[10px] tracking-[0.16em] text-zinc-500 dark:text-zinc-400">
+                    <div className="flex items-center gap-2 font-mono text-xs font-semibold tracking-wider text-zinc-700 dark:text-zinc-200">
                       <BarChart3 className="h-3.5 w-3.5" />
                       LAYER 02 · 期权做市商墙体分布 (Dealer Positioning)
                     </div>
-                    <h2 className="mt-1 font-serif text-2xl text-zinc-950 dark:text-white">
+                    <h2 className="mt-1 font-serif text-2xl font-medium text-zinc-950 dark:text-white">
                       {gexSymbol} Estimated GEX 伽马敞口估算
                     </h2>
                   </div>
 
-                  <div className="flex items-center gap-1 rounded-full border border-zinc-200/80 bg-zinc-100/80 p-0.5 font-mono text-[11px] dark:border-white/10 dark:bg-white/[0.06]">
+                  <div className="flex items-center gap-1 rounded-full border border-zinc-300 bg-zinc-100 p-0.5 font-mono text-xs dark:border-white/20 dark:bg-white/[0.08]">
                     {(["SPY", "QQQ"] as const).map((sym) => (
                       <button
                         key={sym}
                         type="button"
                         onClick={() => setGexSymbol(sym)}
-                        className={`rounded-full px-3 py-1 transition ${
+                        className={`rounded-full px-3 py-1 font-semibold transition ${
                           gexSymbol === sym
                             ? "bg-zinc-950 text-white dark:bg-white dark:text-zinc-950"
-                            : "text-zinc-600 hover:text-zinc-950 dark:text-zinc-300 dark:hover:text-white"
+                            : "text-zinc-700 hover:text-zinc-950 dark:text-zinc-200 dark:hover:text-white"
                         }`}
                       >
                         {sym}
@@ -1212,7 +1367,7 @@ export default function MarketCockpit() {
                   </div>
                 </div>
 
-                <div className="mt-2 rounded-lg border border-zinc-200/80 bg-white/50 px-3 py-1.5 font-mono text-[10px] text-zinc-600 dark:border-white/10 dark:bg-white/[0.03] dark:text-zinc-400">
+                <div className="mt-2 rounded-lg border border-zinc-200 bg-white/75 px-3 py-1.5 font-mono text-xs font-medium text-zinc-700 dark:border-white/15 dark:bg-white/[0.04] dark:text-zinc-200">
                   {activeGex?.assumption_label ??
                     "Estimated GEX ($ / 1% Move · Dealer Positioning · OCC T+1/T+2 OI)"}
                 </div>
@@ -1233,26 +1388,28 @@ export default function MarketCockpit() {
                     {
                       label: "看涨墙 Call Wall",
                       value: activeGex?.call_wall ? `$${activeGex.call_wall.toFixed(0)}` : "—",
-                      cls: "text-emerald-600 dark:text-emerald-400",
+                      cls: "text-emerald-700 dark:text-emerald-400",
                     },
                     {
                       label: "看跌墙 Put Wall",
                       value: activeGex?.put_wall ? `$${activeGex.put_wall.toFixed(0)}` : "—",
-                      cls: "text-rose-600 dark:text-rose-400",
+                      cls: "text-rose-700 dark:text-rose-400",
                     },
                     {
                       label: "翻转位 Zero Gamma",
                       value: activeGex?.zero_gamma ? `$${activeGex.zero_gamma.toFixed(2)}` : "—",
-                      cls: "text-amber-600 dark:text-amber-400",
+                      cls: "text-amber-700 dark:text-amber-300",
                     },
                   ].map((stat) => (
                     <div
                       key={stat.label}
-                      className="rounded-xl border border-zinc-200/80 bg-white/70 px-3 py-2 backdrop-blur-md dark:border-white/10 dark:bg-white/[0.04]"
+                      className="rounded-xl border border-zinc-200 bg-white/85 px-3 py-2.5 dark:border-white/15 dark:bg-white/[0.05]"
                     >
-                      <div className="font-mono text-[10px] text-zinc-500 dark:text-zinc-400">{stat.label}</div>
+                      <div className="font-mono text-xs font-medium text-zinc-700 dark:text-zinc-300">
+                        {stat.label}
+                      </div>
                       <div
-                        className={`mt-0.5 font-mono text-sm font-semibold tabular-nums ${stat.cls}`}
+                        className={`mt-0.5 font-mono text-base font-bold tabular-nums ${stat.cls}`}
                       >
                         {stat.value}
                       </div>
@@ -1270,7 +1427,7 @@ export default function MarketCockpit() {
                 />
 
                 {activeGex && (
-                  <div className="mt-2 flex flex-wrap justify-between font-mono text-[10px] text-zinc-500 tabular-nums">
+                  <div className="mt-2 flex flex-wrap justify-between font-mono text-xs font-medium text-zinc-700 tabular-nums dark:text-zinc-300">
                     <span>
                       P/C OI Ratio: {fmtNum(activeGex.put_call_ratio, 2)} · Call OI{" "}
                       {activeGex.total_call_oi.toLocaleString()} · Put OI{" "}
@@ -1285,45 +1442,45 @@ export default function MarketCockpit() {
               <SpotlightBlock tone="obsidian" className="p-6 lg:col-span-5">
                 <div className="flex items-start justify-between gap-3">
                   <div>
-                    <div className="font-mono text-[10px] tracking-[0.16em] text-zinc-400">
+                    <div className="font-mono text-xs font-semibold tracking-wider text-zinc-200">
                       LAYER 03 · 11 大板块轮动热力 (SPDR Sector Rotation)
                     </div>
-                    <h2 className="mt-1 font-serif text-xl text-white sm:text-2xl">
+                    <h2 className="mt-1 font-serif text-xl font-medium text-white sm:text-2xl">
                       进攻 Offensive / 周期 Cyclical / 防御 Defensive
                     </h2>
                   </div>
-                  <span className="shrink-0 whitespace-nowrap font-mono text-[10px] text-zinc-500">按20日排序</span>
+                  <span className="shrink-0 whitespace-nowrap font-mono text-xs text-zinc-200">按20日排序</span>
                 </div>
 
                 <div className="mt-4 overflow-x-auto">
-                  <table className="w-full text-left font-mono text-xs tabular-nums">
+                  <table className="w-full text-left font-mono text-[13px] tabular-nums">
                     <thead>
-                      <tr className="border-b border-zinc-800 text-[10px] uppercase text-zinc-500">
-                        <th className="py-2 font-medium">ETF</th>
-                        <th className="py-2 font-medium">风格 Bucket</th>
-                        <th className="py-2 text-right font-medium">1D</th>
-                        <th className="py-2 text-right font-medium">20D</th>
-                        <th className="py-2 text-right font-medium">vs SPY</th>
-                        <th className="py-2 text-right font-medium">RVOL</th>
+                      <tr className="border-b border-zinc-800 text-xs font-semibold uppercase text-zinc-200">
+                        <th className="py-2">ETF</th>
+                        <th className="py-2">风格 Bucket</th>
+                        <th className="py-2 text-right">1D</th>
+                        <th className="py-2 text-right">20D</th>
+                        <th className="py-2 text-right">vs SPY</th>
+                        <th className="py-2 text-right">RVOL</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-zinc-800/60">
+                    <tbody className="divide-y divide-zinc-800/70">
                       {(overview?.equities?.sector_rotation ?? []).map((sec) => (
                         <tr
                           key={sec.symbol}
                           onClick={() => setSelectedSymbol(sec.symbol)}
                           className={`cursor-pointer transition ${
                             selectedSymbol === sec.symbol
-                              ? "bg-white text-zinc-950 dark:bg-white/[0.14] dark:text-white dark:ring-1 dark:ring-inset dark:ring-white/25"
-                              : "hover:bg-zinc-900/70 text-zinc-200"
+                              ? "bg-white text-zinc-950 dark:bg-white/[0.16] dark:text-white dark:ring-1 dark:ring-inset dark:ring-white/30"
+                              : "hover:bg-zinc-900/75 text-zinc-100"
                           }`}
                         >
-                          <td className="py-2 pl-2 font-semibold">{sec.symbol}</td>
-                          <td className="py-2 text-[10px] opacity-80">
+                          <td className="py-2.5 pl-2 font-bold">{sec.symbol}</td>
+                          <td className="py-2.5 text-xs font-medium opacity-95">
                             {BUCKET_BI[sec.bucket] ?? sec.bucket}
                           </td>
                           <td
-                            className={`py-2 text-right ${deltaTone(
+                            className={`py-2.5 text-right font-semibold ${deltaTone(
                               sec.return_1d_pct,
                               selectedSymbol !== sec.symbol || theme === "dark"
                             )}`}
@@ -1331,7 +1488,7 @@ export default function MarketCockpit() {
                             {fmtSigned(sec.return_1d_pct, 2, "%")}
                           </td>
                           <td
-                            className={`py-2 text-right ${deltaTone(
+                            className={`py-2.5 text-right font-semibold ${deltaTone(
                               sec.return_20d_pct,
                               selectedSymbol !== sec.symbol
                             )}`}
@@ -1339,14 +1496,14 @@ export default function MarketCockpit() {
                             {fmtSigned(sec.return_20d_pct, 2, "%")}
                           </td>
                           <td
-                            className={`py-2 text-right ${deltaTone(
+                            className={`py-2.5 text-right font-semibold ${deltaTone(
                               sec.rel_spy_20d_pct,
                               selectedSymbol !== sec.symbol
                             )}`}
                           >
                             {fmtSigned(sec.rel_spy_20d_pct, 2, "%")}
                           </td>
-                          <td className="py-2 pr-2 text-right">
+                          <td className="py-2.5 pr-2 text-right font-medium">
                             {fmtNum(sec.rvol_20, 2, "x")}
                           </td>
                         </tr>
@@ -1357,202 +1514,91 @@ export default function MarketCockpit() {
               </SpotlightBlock>
             </motion.section>
 
-            {/* BAND 4: OBSIDIAN (4 cols) + GALLERY WHITE (4 cols) + OBSIDIAN (4 cols) */}
+            {/* BAND 4: HOME WATCHLIST CARD (7 cols, Figures 2+3 + Full Management) + INSTITUTIONAL CFTC COT (5 cols) */}
             <motion.section
               initial={{ opacity: 0, y: 12 }}
               animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.45, delay: 0.18, ease: EASE_EXPO }}
+              transition={{ duration: 0.45, delay: 0.16, ease: EASE_EXPO }}
               className="grid grid-cols-1 gap-5 lg:grid-cols-12"
             >
-              {/* Cross-Asset Rolling Correlations */}
-              <SpotlightBlock tone="obsidian" tilt="subtle" className="p-6 lg:col-span-4">
-                <div className="font-mono text-[10px] tracking-[0.16em] text-zinc-400">
-                  LAYER 03 · 跨资产协同关系 (Cross-Asset Fit)
-                </div>
-                <h3 className="mt-1 font-serif text-xl text-white">
-                  跨资产滚动相关性 (vs SPY)
-                </h3>
-                <p className="mt-0.5 font-mono text-[10px] text-zinc-500">
-                  美元 USD (UUP), 黄金 Gold (GLD), 铜 Copper (CPER), 美债 Bonds (TLT), BTC
-                </p>
-                <div className="mt-3">
-                  <CorrelationHeatmapChart
-                    correlations={overview?.equities?.cross_asset_correlations ?? {}}
-                    height={235}
-                  />
-                </div>
-              </SpotlightBlock>
+              <WatchlistCardPanel
+                items={watchlistItems}
+                loading={watchlistLoading}
+                mutating={watchlistMutating}
+                error={watchlistError}
+                onAddSymbol={handleAddWatchlistSymbol}
+                onReorderSymbols={handlePersistWatchlist}
+                onRemoveSymbol={handleRemoveWatchlistSymbol}
+                onOpenStockDetail={(sym) => navigateView("stock", sym)}
+                onOpenMyWatchlist={() => navigateView("watchlist")}
+              />
 
               {/* Institutional CFTC COT Futures Positioning */}
-              <SpotlightBlock tone="gallery" className="p-6 lg:col-span-4">
-                <div className="flex items-start justify-between gap-2">
-                  <div>
-                    <div className="font-mono text-[10px] tracking-[0.16em] text-zinc-500 dark:text-zinc-400">
-                      LAYER 05 · CFTC 机构期货净持仓 (COT)
-                    </div>
-                    <h3 className="mt-1 font-serif text-xl text-zinc-950 dark:text-white">
-                      非商业投机净头寸 Net Positioning
-                    </h3>
-                  </div>
-                  <span className="shrink-0 whitespace-nowrap rounded border border-zinc-200/80 px-2 py-0.5 font-mono text-[10px] text-zinc-500 dark:border-white/10 dark:text-zinc-400">
-                    周更 Weekly
-                  </span>
-                </div>
-
-                <div className="mt-4 space-y-3">
-                  {Object.entries(overview?.positioning_and_calendar?.cot ?? {}).map(
-                    ([code, row]) => {
-                      const pct = row.noncomm_net_pct_oi ?? 0;
-                      const barWidth = Math.min(100, Math.max(6, Math.abs(pct) * 2.5));
-                      return (
-                        <div
-                          key={code}
-                          className="rounded-xl border border-zinc-200/80 bg-white/60 p-3 backdrop-blur-md dark:border-white/10 dark:bg-white/[0.04]"
-                        >
-                          <div className="flex items-center justify-between font-mono text-xs">
-                            <span className="font-semibold text-zinc-950 dark:text-white">
-                              {code}{" "}
-                              <span className="font-normal text-zinc-500 dark:text-zinc-400">· {row.contract}</span>
-                            </span>
-                            <span
-                              className={`font-semibold tabular-nums ${deltaTone(
-                                row.noncomm_net,
-                                false
-                              )}`}
-                            >
-                              {row.noncomm_net >= 0 ? "+" : ""}
-                              {row.noncomm_net.toLocaleString()}
-                            </span>
-                          </div>
-                          <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-zinc-200 dark:bg-white/10">
-                            <div
-                              className={`h-full rounded-full ${
-                                row.noncomm_net >= 0 ? "bg-emerald-600 dark:bg-emerald-500" : "bg-rose-600 dark:bg-rose-500"
-                              }`}
-                              style={{ width: `${barWidth}%` }}
-                            />
-                          </div>
-                          <div className="mt-1.5 flex justify-between font-mono text-[10px] text-zinc-500 tabular-nums dark:text-zinc-400">
-                            <span>
-                              WoW:{" "}
-                              {row.wow_change !== null
-                                ? `${row.wow_change >= 0 ? "+" : ""}${row.wow_change.toLocaleString()}`
-                                : "—"}
-                            </span>
-                            <span>
-                              {fmtSigned(row.noncomm_net_pct_oi, 1, "% OI")} · {row.report_date}
-                            </span>
-                          </div>
-                        </div>
-                      );
-                    }
-                  )}
-                </div>
-              </SpotlightBlock>
-
-              {/* Catalyst Calendar: FRED Macro + Finnhub Earnings */}
-              <SpotlightBlock tone="obsidian" className="p-6 lg:col-span-4">
-                <div className="flex flex-wrap items-start justify-between gap-2.5">
-                  <div>
-                    <div className="flex items-center gap-1.5 font-mono text-[10px] tracking-[0.16em] text-zinc-400">
-                      <Calendar className="h-3 w-3 shrink-0" />
-                      LAYER 05 · 事件催化剂日历 (Catalysts)
-                    </div>
-                    <h3 className="mt-1 font-serif text-xl text-white">
-                      宏观发布与重点财报 Macro &amp; Earnings
-                    </h3>
-                  </div>
-
-                  <div className="flex shrink-0 items-center gap-1 rounded-full border border-zinc-800 bg-zinc-900 p-0.5 font-mono text-[10px]">
-                    {(
-                      [
-                        { id: "all", label: "全部 All" },
-                        { id: "macro", label: "宏观 Macro" },
-                        { id: "earnings", label: "财报 Earn" },
-                      ] as const
-                    ).map((tab) => (
-                      <button
-                        key={tab.id}
-                        type="button"
-                        onClick={() => setCalendarFilter(tab.id)}
-                        className={`whitespace-nowrap rounded-full px-2 py-0.5 transition ${
-                          calendarFilter === tab.id
-                            ? "bg-white text-zinc-950"
-                            : "text-zinc-400 hover:text-white"
-                        }`}
-                      >
-                        {tab.label}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="mt-4 max-h-[260px] space-y-2 overflow-y-auto pr-1">
-                  {filteredCalendar.length === 0 ? (
-                    <div className="rounded-xl border border-zinc-800 p-4 text-center font-mono text-xs text-zinc-500">
-                      No upcoming events in current filter window
-                    </div>
-                  ) : (
-                    filteredCalendar.map((ev) => (
-                      <div
-                        key={ev.event_key}
-                        className="flex items-center justify-between gap-2 rounded-xl border border-zinc-800/90 bg-zinc-900/50 px-3 py-2"
-                      >
-                        <div className="min-w-0">
-                          <div className="flex items-center gap-1.5">
-                            <span
-                              className={`rounded px-1.5 py-0.5 font-mono text-[9px] uppercase ${
-                                ev.event_type === "macro"
-                                  ? "bg-white text-zinc-950"
-                                  : "border border-zinc-700 text-zinc-300"
-                              }`}
-                            >
-                              {ev.event_type}
-                            </span>
-                            <span className="truncate font-mono text-xs font-medium text-zinc-100">
-                              {ev.title}
-                            </span>
-                          </div>
-                          <div className="mt-0.5 font-mono text-[10px] text-zinc-500 tabular-nums">
-                            {ev.event_time.slice(0, 10)} · Impact: {ev.impact}
-                          </div>
-                        </div>
-
-                        {(ev.actual !== null && ev.actual !== undefined) ||
-                        ev.estimate !== null ||
-                        ev.eps_actual != null ||
-                        ev.eps_estimate !== null ? (
-                          <div className="shrink-0 text-right font-mono text-[10px] tabular-nums">
-                            {ev.event_type === "macro" ? (
-                              <>
-                                {ev.actual != null && (
-                                  <span className="block font-semibold text-emerald-400">
-                                    实际 {ev.actual}
-                                  </span>
-                                )}
-                                {ev.estimate != null && (
-                                  <span className="text-zinc-400">预期 {ev.estimate}</span>
-                                )}
-                              </>
-                            ) : (
-                              <>
-                                {ev.eps_actual != null && (
-                                  <span className="block font-semibold text-emerald-400">
-                                    实际 ${ev.eps_actual.toFixed(2)}
-                                  </span>
-                                )}
-                                {ev.eps_estimate !== null && (
-                                  <span className="text-zinc-300">
-                                    Est ${ev.eps_estimate.toFixed(2)}
-                                  </span>
-                                )}
-                              </>
-                            )}
-                          </div>
-                        ) : null}
+              <SpotlightBlock tone="obsidian" className="flex flex-col justify-between p-6 lg:col-span-5">
+                <div>
+                  <div className="flex items-start justify-between gap-2">
+                    <div>
+                      <div className="font-mono text-xs font-semibold tracking-wider text-zinc-200">
+                        LAYER 05 · CFTC 机构期货净持仓 (COT)
                       </div>
-                    ))
-                  )}
+                      <h3 className="mt-1 font-serif text-xl font-medium text-white sm:text-2xl">
+                        非商业投机净头寸 Net Positioning
+                      </h3>
+                    </div>
+                    <span className="shrink-0 whitespace-nowrap rounded-lg border border-zinc-700 bg-zinc-900 px-2.5 py-1 font-mono text-xs font-medium text-zinc-100">
+                      周更 Weekly
+                    </span>
+                  </div>
+
+                  <div className="mt-4 space-y-3">
+                    {Object.entries(overview?.positioning_and_calendar?.cot ?? {}).map(
+                      ([code, row]) => {
+                        const pct = row.noncomm_net_pct_oi ?? 0;
+                        const barWidth = Math.min(100, Math.max(6, Math.abs(pct) * 2.5));
+                        return (
+                          <div
+                            key={code}
+                            className="rounded-xl border border-zinc-800 bg-zinc-950/75 p-3.5"
+                          >
+                            <div className="flex items-center justify-between font-mono text-sm">
+                              <span className="font-bold text-white">
+                                {code}{" "}
+                                <span className="font-normal text-zinc-200">· {row.contract}</span>
+                              </span>
+                              <span
+                                className={`font-bold tabular-nums ${deltaTone(
+                                  row.noncomm_net,
+                                  true
+                                )}`}
+                              >
+                                {row.noncomm_net >= 0 ? "+" : ""}
+                                {row.noncomm_net.toLocaleString()}
+                              </span>
+                            </div>
+                            <div className="mt-2 h-2 w-full overflow-hidden rounded-full bg-zinc-800">
+                              <div
+                                className={`h-full rounded-full ${
+                                  row.noncomm_net >= 0 ? "bg-emerald-500" : "bg-rose-500"
+                                }`}
+                                style={{ width: `${barWidth}%` }}
+                              />
+                            </div>
+                            <div className="mt-2 flex justify-between font-mono text-xs text-zinc-200 tabular-nums">
+                              <span>
+                                周变动 WoW:{" "}
+                                {row.wow_change !== null
+                                  ? `${row.wow_change >= 0 ? "+" : ""}${row.wow_change.toLocaleString()}`
+                                  : "—"}
+                              </span>
+                              <span>
+                                {fmtSigned(row.noncomm_net_pct_oi, 1, "% OI")} · {row.report_date}
+                              </span>
+                            </div>
+                          </div>
+                        );
+                      }
+                    )}
+                  </div>
                 </div>
               </SpotlightBlock>
             </motion.section>
@@ -1561,23 +1607,25 @@ export default function MarketCockpit() {
       </main>
       )}
 
-      {/* Full-Width Bottom Auto-Scrolling Macro Ticker Strip (with swipe & K-Line sparklines) */}
+      {/* Full-Width Compact Auto-Scrolling Macro Ticker Strip */}
       <MacroTickerStrip
         selectedSymbol={selectedSymbol}
         onSelectProxy={(proxySymbol) => {
           setSelectedSymbol(proxySymbol);
-          if (viewMode !== "cockpit") {
-            setViewMode("cockpit");
+          if (viewMode === "stock") {
+            navigateView("stock", proxySymbol);
+          } else if (viewMode !== "cockpit") {
+            navigateView("cockpit");
           }
         }}
       />
 
       <InvestigatorDrawer
-        open={drawerOpen && viewMode === "cockpit"}
+        open={drawerOpen && (viewMode === "cockpit" || viewMode === "stock" || viewMode === "watchlist")}
         mode="drawer"
         onClose={() => setDrawerOpen(false)}
-        onOpenFullWorkspace={() => setViewMode("copilot")}
-        defaultSymbol={selectedSymbol}
+        onOpenFullWorkspace={() => navigateView("copilot")}
+        defaultSymbol={viewMode === "stock" ? activeStockSymbol : selectedSymbol}
       />
     </div>
   );

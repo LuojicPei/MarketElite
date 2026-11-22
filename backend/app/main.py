@@ -20,6 +20,7 @@ from app.api.watchdog import router as watchdog_router
 from app.core.clients import InfraManager
 from app.core.config import get_settings
 from app.core.telemetry import init_phoenix_telemetry
+from app.db.models import UserWatchlistItem
 from app.db.session import create_db_engine, create_session_factory
 from app.mcp_servers.market_server import build_market_mcp_server, configure_mcp_dependencies
 
@@ -36,6 +37,8 @@ def create_app() -> FastAPI:
         await infra.startup()
         checkpointer, pg_checkpoint_ready = await build_checkpointer(infra.pg_pool)
         db_engine = create_db_engine(settings)
+        async with db_engine.begin() as conn:
+            await conn.run_sync(UserWatchlistItem.__table__.create, checkfirst=True)
         session_factory = create_session_factory(db_engine)
         configure_mcp_dependencies(
             settings=settings,

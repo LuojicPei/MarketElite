@@ -68,8 +68,8 @@ export default function GexProfileChart({
         axisLine: { lineStyle: { color: isDark ? "rgba(255,255,255,0.16)" : "#D4D4D8" } },
         axisTick: { show: false },
         axisLabel: {
-          color: isDark ? "#A1A1AA" : "#52525B",
-          fontSize: 10,
+          color: isDark ? "#E4E4E7" : "#27272A",
+          fontSize: 11,
           fontFamily: "JetBrains Mono, monospace",
           interval: Math.max(0, Math.floor(strikes.length / 8) - 1),
           formatter: (val: string) => {
@@ -84,13 +84,13 @@ export default function GexProfileChart({
         type: "value",
         splitLine: {
           lineStyle: {
-            color: isDark ? "rgba(255,255,255,0.07)" : "#E4E4E7",
+            color: isDark ? "rgba(255,255,255,0.09)" : "#E4E4E7",
             type: "dashed",
           },
         },
         axisLabel: {
-          color: isDark ? "#A1A1AA" : "#52525B",
-          fontSize: 10,
+          color: isDark ? "#E4E4E7" : "#27272A",
+          fontSize: 11,
           fontFamily: "JetBrains Mono, monospace",
           formatter: (v: number) => {
             if (Math.abs(v) < 0.001) return "0";

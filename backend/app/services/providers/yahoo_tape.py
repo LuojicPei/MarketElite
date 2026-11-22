@@ -27,14 +27,16 @@ MACRO_TAPE_SPECS: tuple[MacroTapeSpec, ...] = (
     MacroTapeSpec("^TNX", "TLT", "10-Yr Bond", "10年美债", 4, "%"),
     MacroTapeSpec("^VIX", "SPY", "VIX", "恐慌指数", 2, ""),
     MacroTapeSpec("DX-Y.NYB", "UUP", "DXY Dollar", "美元指数", 2, ""),
+    MacroTapeSpec("JPY=X", "UUP", "USD/JPY", "美元/日元", 3, ""),
+    MacroTapeSpec("^N225", "SPY", "Nikkei 225", "日经 225", 2, ""),
+    MacroTapeSpec("^KS11", "SOXX", "KOSPI", "韩国 KOSPI", 2, ""),
+    MacroTapeSpec("000001.SS", "SPY", "SSE Index", "上证指数", 2, ""),
     MacroTapeSpec("GC=F", "GLD", "Gold", "黄金", 2, "$"),
     MacroTapeSpec("SI=F", "SLV", "Silver", "白银", 2, "$"),
     MacroTapeSpec("CL=F", "USO", "WTI Crude", "WTI 原油", 2, "$"),
     MacroTapeSpec("BZ=F", "BNO", "Brent Crude", "布伦特油", 2, "$"),
-    MacroTapeSpec("HG=F", "CPER", "Copper", "精铜期货", 3, "$"),
     MacroTapeSpec("NG=F", "UNG", "Nat Gas", "天然气", 3, "$"),
     MacroTapeSpec("BTC-USD", "BTCUSDT", "Bitcoin", "比特币", 0, "$"),
-    MacroTapeSpec("ETH-USD", "BTCUSDT", "Ethereum", "以太坊", 2, "$"),
 )
 
 _YAHOO_CHART_URL = "https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"
@@ -174,7 +176,7 @@ async def fetch_macro_tape_snapshot(
     force_refresh: bool = False,
 ) -> dict[str, Any]:
     """Return global multi-asset ticker strip with real OHLC micro-bars and prev-close reference."""
-    cache_key = "marketelite:macro:tape:v1"
+    cache_key = "marketelite:macro:tape:v2"
 
     async def _fetch_all() -> dict[str, Any]:
         async with httpx.AsyncClient(headers=_DEFAULT_HEADERS, timeout=8.0) as client:

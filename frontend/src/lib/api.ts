@@ -267,16 +267,80 @@ export interface RegimeHistoryPoint {
   net_liquidity_bn: number | null;
 }
 
+export interface AssetProfile {
+  symbol: string;
+  name: string;
+  exchange: string;
+  industry?: string | null;
+  logo_url?: string | null;
+  weburl?: string | null;
+  ipo?: string | null;
+  market_cap_b?: number | null;
+}
+
+export interface AssetMetrics {
+  open: number;
+  day_high: number;
+  day_low: number;
+  prev_close: number;
+  volume: number;
+  avg_vol_10d: number | null;
+  week52_high: number | null;
+  week52_low: number | null;
+  pe_ttm: number | null;
+  pb: number | null;
+  beta: number | null;
+  dividend_yield: number | null;
+  change_1d_abs: number;
+  change_5d_pct: number | null;
+  change_1m_pct: number | null;
+  change_6m_pct: number | null;
+  change_ytd_pct: number | null;
+  bars_count: number;
+}
+
 export interface AssetDetailResponse {
   symbol: string;
   asset_class: string;
   source: string;
   bars: DailyBarPoint[];
   technicals: AssetTechnicals;
+  profile?: AssetProfile;
+  metrics?: AssetMetrics;
   options_gex: EstimatedGexSnapshot | null;
   news: AssetNewsItem[];
   eps_history?: EpsHistoryPoint[];
   recommendations?: AnalystRecommendationPoint[];
+}
+
+export interface WatchlistAssetItem {
+  symbol: string;
+  name: string;
+  exchange: string;
+  industry?: string | null;
+  asset_class: string;
+  trade_date: string;
+  price: number;
+  prev_close: number;
+  change_1d_abs: number;
+  change_1d_pct: number | null;
+  change_5d_pct: number | null;
+  change_1m_pct: number | null;
+  change_6m_pct: number | null;
+  change_ytd_pct: number | null;
+  rsi_14: number | null;
+  rvol_20: number | null;
+  market_cap_b: number | null;
+  pe_ttm: number | null;
+  sparkline_bars: MacroTapeBar[];
+  daily_closes: { d: string; c: number }[];
+}
+
+export interface WatchlistResponse {
+  count: number;
+  symbols: string[];
+  items: WatchlistAssetItem[];
+  generated_at?: string;
 }
 
 export interface TrackedAssetSummary {
@@ -422,6 +486,31 @@ export async function fetchMacroTape(forceRefresh = false): Promise<MacroTapeRes
   );
   if (!res.ok) {
     throw new Error(`Macro tape failed (${res.status})`);
+  }
+  return res.json();
+}
+
+export function getAssetLogoUrl(symbol: string): string {
+  return `${API_BASE}/api/assets/${encodeURIComponent(symbol.toUpperCase())}/logo`;
+}
+
+export async function fetchWatchlist(): Promise<WatchlistResponse> {
+  const res = await fetch(`${API_BASE}/api/watchlist`, { cache: "no-store" });
+  if (!res.ok) {
+    throw new Error(`Watchlist failed (${res.status})`);
+  }
+  return res.json();
+}
+
+export async function updateWatchlist(symbols: string[]): Promise<WatchlistResponse> {
+  const res = await fetch(`${API_BASE}/api/watchlist`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ symbols }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail || `Watchlist update failed (${res.status})`);
   }
   return res.json();
 }
