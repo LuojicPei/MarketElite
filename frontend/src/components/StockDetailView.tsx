@@ -166,7 +166,7 @@ export default function StockDetailView({
     : 0;
 
   return (
-    <main className="mx-auto w-full max-w-[1780px] space-y-6 px-4 pt-4 sm:px-6 lg:px-8">
+    <main className="mx-auto w-full max-w-[1860px] space-y-4 px-4 pt-3 sm:px-6 lg:px-8">
       {/* Top Breadcrumb Navigation & Instant Ticker Switch */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-wrap items-center gap-2">
@@ -512,9 +512,9 @@ export default function StockDetailView({
         </SpotlightBlock>
       </div>
 
-      {/* Block 3: Options GEX Wall (Left) + Analyst Ratings & Quarterly EPS Surprises (Right) */}
-      <div className="grid grid-cols-1 gap-5 lg:grid-cols-12">
-        <SpotlightBlock tone="obsidian" className="space-y-4 p-5 sm:p-6 lg:col-span-6">
+      {/* Block 3: Dense 3-Column Deep Dive Grid (GEX Wall + Analyst/EPS + SEC/Headlines) */}
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-12">
+        <SpotlightBlock tone="obsidian" className="space-y-3 p-4 sm:p-5 xl:col-span-4">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="flex items-center gap-2 font-mono text-xs font-semibold tracking-wider text-zinc-200">
               <BarChart3 className="h-4 w-4 text-emerald-400" />
@@ -574,7 +574,7 @@ export default function StockDetailView({
         </SpotlightBlock>
 
         {/* Analyst Consensus + Quarterly EPS History */}
-        <SpotlightBlock tone="gallery" className="space-y-5 p-5 sm:p-6 lg:col-span-6">
+        <SpotlightBlock tone="gallery" className="space-y-4 p-4 sm:p-5 xl:col-span-4">
           <div className="flex items-center gap-2 font-mono text-xs font-semibold tracking-wider text-zinc-700 dark:text-zinc-300">
             <Layers className="h-4 w-4" />
             ANALYST CONSENSUS &amp; EPS SURPRISE · 华尔街一致预期与财报超预期表现
@@ -677,14 +677,11 @@ export default function StockDetailView({
             )}
           </div>
         </SpotlightBlock>
-      </div>
-
-      {/* Block 4: SEC EDGAR 10-K/Q Filing Probe + Alpaca Real-Time News Feed */}
-      <div className="grid grid-cols-1 gap-5 lg:grid-cols-12">
-        <SpotlightBlock tone="gallery" className="space-y-4 p-5 sm:p-6 lg:col-span-5">
+      {/* Block 4 -> Consolidated 3rd Column in Dense 12-Col Bento Grid: SEC + News */}
+        <SpotlightBlock tone="gallery" className="space-y-3.5 p-4 sm:p-5 xl:col-span-4">
           <div className="flex items-center gap-2 font-mono text-xs font-semibold tracking-wider text-zinc-700 dark:text-zinc-300">
             <FileText className="h-4 w-4" />
-            SEC 10-K / 10-Q FILING RAG · 证监会公告一键穿透
+            SEC 10-K / 10-Q 与实时快讯 ({symbol})
           </div>
 
           <div className="flex flex-wrap gap-2">
@@ -753,50 +750,48 @@ export default function StockDetailView({
           )}
 
           {!secRes && (
-            <div className="flex items-center gap-2 rounded-xl border border-zinc-200 bg-white/80 p-4 text-sm text-zinc-700 dark:border-white/15 dark:bg-white/[0.04] dark:text-zinc-300">
+            <div className="flex items-center gap-2 rounded-xl border border-zinc-200 bg-white/80 p-3 text-xs text-zinc-700 dark:border-white/15 dark:bg-white/[0.04] dark:text-zinc-300">
               <Bot className="h-4 w-4 shrink-0" />
-              点击上方快捷关键词或输入英文检索句，即时从 SEC EDGAR 拉取并混合检索 10-K/10-Q 原文。
+              点击快捷词检索 {symbol} SEC EDGAR 10-K/Q 原文段落。
             </div>
           )}
-        </SpotlightBlock>
 
-        <SpotlightBlock tone="obsidian" className="space-y-4 p-5 sm:p-6 lg:col-span-7">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2 font-mono text-xs font-semibold tracking-wider text-zinc-200">
-              <Newspaper className="h-4 w-4 text-emerald-400" />
-              LATEST MARKET HEADLINES · {symbol} 实时资讯流
+          {/* Embedded Headlines right underneath in the 3rd column */}
+          <div className="border-t border-zinc-200 pt-3 dark:border-white/15">
+            <div className="mb-2 flex items-center justify-between font-mono text-xs font-semibold text-zinc-800 dark:text-zinc-200">
+              <span className="flex items-center gap-1.5">
+                <Newspaper className="h-3.5 w-3.5" />
+                实时市场快讯 Headlines
+              </span>
+              <span>{detail?.news.length ?? 0} 条</span>
             </div>
-            <span className="font-mono text-xs text-zinc-300">
-              {detail?.news.length ?? 0} 条报道
-            </span>
-          </div>
-
-          <div className="divide-y divide-zinc-800 overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-950/70">
-            {detail?.news && detail.news.length > 0 ? (
-              detail.news.slice(0, 6).map((item) => (
-                <a
-                  key={item.id}
-                  href={item.url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="flex items-start justify-between gap-3 px-4 py-3 transition hover:bg-white/[0.05]"
-                >
-                  <div className="min-w-0 space-y-1">
-                    <div className="text-sm font-medium leading-snug text-zinc-100">
-                      {item.headline}
+            <div className="max-h-56 divide-y divide-zinc-200/80 overflow-y-auto rounded-xl border border-zinc-200 bg-white/85 dark:divide-white/10 dark:border-white/15 dark:bg-white/[0.03]">
+              {detail?.news && detail.news.length > 0 ? (
+                detail.news.slice(0, 5).map((item) => (
+                  <a
+                    key={item.id}
+                    href={item.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-start justify-between gap-2 px-3 py-2 text-xs transition hover:bg-zinc-100 dark:hover:bg-white/[0.05]"
+                  >
+                    <div className="min-w-0">
+                      <div className="line-clamp-2 font-medium text-zinc-900 dark:text-zinc-100">
+                        {item.headline}
+                      </div>
+                      <div className="mt-0.5 font-mono text-[11px] text-zinc-700 dark:text-zinc-300">
+                        {item.source} · {item.created_at.slice(0, 10)}
+                      </div>
                     </div>
-                    <div className="font-mono text-xs text-zinc-300">
-                      {item.source} · {item.created_at.slice(0, 16).replace("T", " ")} UTC
-                    </div>
-                  </div>
-                  <ExternalLink className="mt-1 h-4 w-4 shrink-0 text-zinc-300" />
-                </a>
-              ))
-            ) : (
-              <div className="p-6 text-center text-sm text-zinc-300">
-                当前标的暂无 Alpaca 新闻摘要。
-              </div>
-            )}
+                    <ExternalLink className="mt-0.5 h-3.5 w-3.5 shrink-0 text-zinc-600 dark:text-zinc-300" />
+                  </a>
+                ))
+              ) : (
+                <div className="p-4 text-center text-xs text-zinc-700 dark:text-zinc-300">
+                  当前标的暂无 Alpaca 新闻摘要。
+                </div>
+              )}
+            </div>
           </div>
         </SpotlightBlock>
       </div>

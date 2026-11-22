@@ -35,10 +35,11 @@ export default function MacroTickerStrip({
   onSelectProxy,
 }: MacroTickerStripProps) {
   const [items, setItems] = useState<MacroTapeItem[]>([]);
-  const containerRef = useRef<HTMLDivElement | null>(null);
+  const viewportRef = useRef<HTMLDivElement | null>(null);
   const trackRef = useRef<HTMLDivElement | null>(null);
 
   const offsetRef = useRef(0);
+  const halfWidthRef = useRef(0);
   const hoveredRef = useRef(false);
   const draggingRef = useRef(false);
   const dragStartXRef = useRef(0);
@@ -69,35 +70,52 @@ export default function MacroTickerStrip({
     return next;
   }, []);
 
-  // Gentle slow auto-scroll (14 px/sec) with float accumulator
+  const applyGpuTransform = useCallback(() => {
+    const track = trackRef.current;
+    if (!track) return;
+    track.style.transform = `translate3d(${-offsetRef.current}px, 0, 0)`;
+  }, []);
+
+  // Measure single-loop width via ResizeObserver (avoids layout reads inside RAF)
+  useEffect(() => {
+    const track = trackRef.current;
+    if (!track) return;
+    const measure = () => {
+      halfWidthRef.current = track.scrollWidth / 2;
+      offsetRef.current = wrapOffset(offsetRef.current, halfWidthRef.current);
+      applyGpuTransform();
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(track);
+    return () => ro.disconnect();
+  }, [items, applyGpuTransform, wrapOffset]);
+
+  // Buttery GPU-composited subpixel glide (zero integer scrollLeft quantization)
   useEffect(() => {
     if (items.length === 0) return;
     let rafId = 0;
     let lastTs = performance.now();
-    const SPEED_PX_PER_SEC = 14;
+    const SPEED_PX_PER_SEC = 18;
 
     const tick = (now: number) => {
-      const dt = Math.min(0.1, (now - lastTs) / 1000);
+      const dt = Math.min(0.05, Math.max(0, (now - lastTs) / 1000));
       lastTs = now;
 
-      const container = containerRef.current;
-      const track = trackRef.current;
-      if (container && track && !hoveredRef.current && !draggingRef.current) {
-        const halfWidth = track.scrollWidth / 2;
-        if (halfWidth > 0) {
-          offsetRef.current = wrapOffset(
-            offsetRef.current + SPEED_PX_PER_SEC * dt,
-            halfWidth
-          );
-          container.scrollLeft = offsetRef.current;
-        }
+      const halfWidth = halfWidthRef.current;
+      if (halfWidth > 0 && !hoveredRef.current && !draggingRef.current) {
+        offsetRef.current = wrapOffset(
+          offsetRef.current + SPEED_PX_PER_SEC * dt,
+          halfWidth
+        );
+        applyGpuTransform();
       }
       rafId = window.requestAnimationFrame(tick);
     };
 
     rafId = window.requestAnimationFrame(tick);
     return () => window.cancelAnimationFrame(rafId);
-  }, [items.length, wrapOffset]);
+  }, [items.length, applyGpuTransform, wrapOffset]);
 
   const handlePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     if (e.button !== 0 && e.pointerType === "mouse") return;
@@ -114,12 +132,10 @@ export default function MacroTickerStrip({
       if (Math.abs(dx) > 5) {
         dragMovedRef.current = true;
       }
-      const container = containerRef.current;
-      const track = trackRef.current;
-      if (!container || !track) return;
-      const halfWidth = track.scrollWidth / 2;
+      const halfWidth = halfWidthRef.current;
+      if (halfWidth <= 0) return;
       offsetRef.current = wrapOffset(dragStartOffsetRef.current - dx, halfWidth);
-      container.scrollLeft = offsetRef.current;
+      applyGpuTransform();
     };
 
     const onWinPointerUp = () => {
@@ -138,18 +154,15 @@ export default function MacroTickerStrip({
       window.removeEventListener("pointerup", onWinPointerUp);
       window.removeEventListener("pointercancel", onWinPointerUp);
     };
-  }, [wrapOffset]);
+  }, [applyGpuTransform, wrapOffset]);
 
   const handleWheel = (e: React.WheelEvent<HTMLDivElement>) => {
-    const container = containerRef.current;
-    const track = trackRef.current;
-    if (!container || !track) return;
-    const halfWidth = track.scrollWidth / 2;
+    const halfWidth = halfWidthRef.current;
     if (halfWidth <= 0) return;
     const delta = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY;
     if (Math.abs(delta) < 1) return;
     offsetRef.current = wrapOffset(offsetRef.current + delta * 0.9, halfWidth);
-    container.scrollLeft = offsetRef.current;
+    applyGpuTransform();
   };
 
   if (items.length === 0) {
@@ -161,7 +174,7 @@ export default function MacroTickerStrip({
   return (
     <aside
       aria-label="Global Macro Live Ticker Tape"
-      className="macro-tape-rail fixed inset-x-0 bottom-0 z-40 h-[48px] select-none"
+      className="macro-tape-rail fixed inset-x-0 bottom-0 z-40 h-[48px] select-none overflow-hidden"
       onMouseEnter={() => {
         hoveredRef.current = true;
       }}
@@ -170,13 +183,16 @@ export default function MacroTickerStrip({
       }}
     >
       <div
-        ref={containerRef}
+        ref={viewportRef}
         onPointerDown={handlePointerDown}
         onWheel={handleWheel}
-        className="h-full w-full cursor-grab overflow-x-hidden active:cursor-grabbing"
+        className="h-full w-full cursor-grab overflow-hidden active:cursor-grabbing"
         style={{ touchAction: "pan-y" }}
       >
-        <div ref={trackRef} className="flex h-full w-max items-stretch">
+        <div
+          ref={trackRef}
+          className="flex h-full w-max items-stretch will-change-transform"
+        >
           {loopItems.map((item, idx) => {
             const isUp = item.change_abs >= 0;
             const isSelected = selectedSymbol === item.proxy_symbol;

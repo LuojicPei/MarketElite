@@ -258,9 +258,9 @@ export default function WatchlistWorkspace({
   const zeroY = mapPctY(0);
 
   return (
-    <main className="mx-auto w-full max-w-[1780px] space-y-6 px-4 pt-4 sm:px-6 lg:px-8">
-      {/* Header Controls & Executive Watchlist Brief (Figure 4) */}
-      <SpotlightBlock tone="gallery" className="space-y-5 p-5 sm:p-6">
+    <main className="mx-auto w-full max-w-[1860px] space-y-4 px-4 pt-3 sm:px-6 lg:px-8">
+      {/* Compact Header + Executive Brief Bar */}
+      <SpotlightBlock tone="gallery" className="space-y-3.5 p-4 sm:p-5">
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div>
             <div className="font-mono text-xs font-semibold tracking-wider text-zinc-700 dark:text-zinc-300">
@@ -428,164 +428,171 @@ export default function WatchlistWorkspace({
           </div>
         )}
 
-        {/* Multi-Horizon Performance Breakdown Table (Figure 4 Table — strictly $ not US$) */}
-        <div className="overflow-x-auto rounded-2xl border border-zinc-200/90 bg-white/85 dark:border-white/15 dark:bg-white/[0.03]">
-          <table className="w-full min-w-[820px] border-collapse text-left">
-            <thead>
-              <tr className="border-b border-zinc-200 font-mono text-xs font-semibold text-zinc-700 dark:border-white/15 dark:text-zinc-300">
-                <th className="px-4 py-3">标的资产</th>
-                <th className="px-3 py-3 text-center">近18日K线</th>
-                <th className="px-3 py-3 text-right">最新价</th>
-                {(
-                  [
-                    { f: "1d", label: "1天" },
-                    { f: "5d", label: "5日" },
-                    { f: "1m", label: "1月" },
-                    { f: "6m", label: "6月" },
-                    { f: "ytd", label: "年内 YTD" },
-                  ] as const
-                ).map((col) => (
-                  <th key={col.f} className="px-3 py-3 text-right">
-                    <button
-                      type="button"
-                      onClick={() => handleSortClick(col.f)}
-                      className={`inline-flex items-center gap-1 hover:text-zinc-950 dark:hover:text-white ${
-                        sortField === col.f ? "font-bold text-zinc-950 dark:text-white" : ""
-                      }`}
-                    >
-                      <span>{col.label}</span>
-                      <ArrowUpDown className="h-3 w-3" />
-                    </button>
-                  </th>
-                ))}
-                <th className="px-3 py-3 text-right">RSI(14)</th>
-                <th className="px-4 py-3 text-right">管理 / 详情</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-zinc-200/75 font-mono text-sm tabular-nums dark:divide-white/[0.08]">
-              {loading && sortedItems.length === 0 ? (
-                <tr>
-                  <td colSpan={10} className="px-4 py-8 text-center text-zinc-700 dark:text-zinc-300">
-                    加载关注列表中...
-                  </td>
-                </tr>
-              ) : (
-                sortedItems.map((item) => {
-                  const origIdx = items.findIndex((x) => x.symbol === item.symbol);
-                  const isUp1d = (item.change_1d_pct ?? 0) >= 0;
-                  const horizons = [
-                    item.change_1d_pct,
-                    item.change_5d_pct,
-                    item.change_1m_pct,
-                    item.change_6m_pct,
-                    item.change_ytd_pct,
-                  ];
-                  return (
-                    <tr
-                      key={item.symbol}
-                      onClick={() => onOpenStockDetail(item.symbol)}
-                      className="cursor-pointer transition-colors hover:bg-zinc-100/80 dark:hover:bg-white/[0.06]"
-                    >
-                      <td className="px-4 py-3 font-sans">
-                        <div className="flex items-center gap-3">
-                          <StockLogoBadge symbol={item.symbol} size={34} />
-                          <div>
-                            <div className="font-semibold text-zinc-950 dark:text-zinc-50">
-                              {item.name}
-                            </div>
-                            <div className="font-mono text-xs font-medium text-zinc-700 dark:text-zinc-300">
-                              {item.symbol} · {item.exchange}
-                            </div>
-                          </div>
-                        </div>
-                      </td>
-                      <td className="px-3 py-3">
-                        <div className="flex justify-center">
-                          <MiniKLineSparkline
-                            bars={item.sparkline_bars}
-                            prevClose={item.prev_close}
-                            isUp={isUp1d}
-                            width={74}
-                            height={26}
-                          />
-                        </div>
-                      </td>
-                      <td className="px-3 py-3 text-right font-bold text-zinc-950 dark:text-zinc-50">
-                        {fmtUsd(item.price)}
-                      </td>
-                      {horizons.map((val, hIdx) => (
-                        <td
-                          key={hIdx}
-                          className={`px-3 py-3 text-right font-semibold ${
-                            val === null || val === undefined
-                              ? "text-zinc-600 dark:text-zinc-300"
-                              : val >= 0
-                                ? "text-emerald-700 dark:text-emerald-400"
-                                : "text-rose-700 dark:text-rose-400"
-                          }`}
-                        >
-                          {fmtPct(val)}
-                        </td>
-                      ))}
-                      <td className="px-3 py-3 text-right font-semibold text-zinc-800 dark:text-zinc-200">
-                        {item.rsi_14 != null ? item.rsi_14.toFixed(1) : "—"}
-                      </td>
-                      <td
-                        className="px-4 py-3 text-right"
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        <div className="inline-flex items-center gap-1.5">
-                          {manageMode && origIdx >= 0 && (
-                            <>
-                              <button
-                                type="button"
-                                onClick={() => void moveOrder(origIdx, -1)}
-                                disabled={mutating || origIdx === 0}
-                                title="上移"
-                                className="rounded-lg border border-zinc-300 bg-white p-1.5 text-zinc-800 disabled:opacity-35 dark:border-white/15 dark:bg-zinc-900 dark:text-zinc-100"
-                              >
-                                <ArrowUp className="h-3.5 w-3.5" />
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => void moveOrder(origIdx, 1)}
-                                disabled={mutating || origIdx === items.length - 1}
-                                title="下移"
-                                className="rounded-lg border border-zinc-300 bg-white p-1.5 text-zinc-800 disabled:opacity-35 dark:border-white/15 dark:bg-zinc-900 dark:text-zinc-100"
-                              >
-                                <ArrowDown className="h-3.5 w-3.5" />
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => void onRemoveSymbol(item.symbol)}
-                                disabled={mutating}
-                                title="删除"
-                                className="rounded-lg border border-rose-300 bg-rose-50 p-1.5 text-rose-700 dark:border-rose-500/40 dark:bg-rose-950/60 dark:text-rose-300"
-                              >
-                                <Trash2 className="h-3.5 w-3.5" />
-                              </button>
-                            </>
-                          )}
-                          <button
-                            type="button"
-                            onClick={() => onOpenStockDetail(item.symbol)}
-                            className="rounded-lg border border-zinc-300 bg-white px-2.5 py-1 text-xs font-semibold text-zinc-900 transition hover:border-zinc-950 dark:border-white/20 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:border-white"
-                          >
-                            个股页 →
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })
-              )}
-            </tbody>
-          </table>
-        </div>
+        {/* Side-by-Side Single-Screen Workspace Grid: Multi-Horizon Table (Left 6) + Comparison Chart (Right 6) */}
       </SpotlightBlock>
 
-      {/* Normalized Multi-Stock Percentage Comparison Chart (Figure 5) */}
-      <SpotlightBlock tone="gallery" className="space-y-4 p-5 sm:p-6">
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-12">
+        <SpotlightBlock tone="gallery" className="overflow-hidden p-4 xl:col-span-6">
+          <div className="mb-3 flex items-center justify-between">
+            <span className="font-mono text-xs font-semibold tracking-wider text-zinc-700 dark:text-zinc-200">
+              MULTI-HORIZON MATRIX · 多周期收益与动量明细
+            </span>
+            <span className="font-mono text-xs text-zinc-700 dark:text-zinc-300">
+              点击行跳转个股页
+            </span>
+          </div>
+          <div className="overflow-x-auto rounded-xl border border-zinc-200/90 bg-white/85 dark:border-white/15 dark:bg-white/[0.03]">
+            <table className="w-full border-collapse text-left">
+              <thead>
+                <tr className="border-b border-zinc-200 font-mono text-xs font-semibold text-zinc-700 dark:border-white/15 dark:text-zinc-300">
+                  <th className="px-3 py-2.5">标的资产</th>
+                  <th className="px-2 py-2.5 text-center">K线</th>
+                  <th className="px-2.5 py-2.5 text-right">最新价</th>
+                  {(
+                    [
+                      { f: "1d", label: "1天" },
+                      { f: "5d", label: "5日" },
+                      { f: "1m", label: "1月" },
+                      { f: "6m", label: "6月" },
+                      { f: "ytd", label: "YTD" },
+                    ] as const
+                  ).map((col) => (
+                    <th key={col.f} className="px-2 py-2.5 text-right">
+                      <button
+                        type="button"
+                        onClick={() => handleSortClick(col.f)}
+                        className={`inline-flex items-center gap-0.5 hover:text-zinc-950 dark:hover:text-white ${
+                          sortField === col.f ? "font-bold text-zinc-950 dark:text-white" : ""
+                        }`}
+                      >
+                        <span>{col.label}</span>
+                        <ArrowUpDown className="h-3 w-3" />
+                      </button>
+                    </th>
+                  ))}
+                  <th className="px-2 py-2.5 text-right">RSI</th>
+                  {manageMode && <th className="px-2.5 py-2.5 text-right">操作</th>}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-zinc-200/75 font-mono text-xs tabular-nums dark:divide-white/[0.08]">
+                {loading && sortedItems.length === 0 ? (
+                  <tr>
+                    <td colSpan={10} className="px-4 py-8 text-center text-zinc-700 dark:text-zinc-300">
+                      加载关注列表中...
+                    </td>
+                  </tr>
+                ) : (
+                  sortedItems.map((item) => {
+                    const origIdx = items.findIndex((x) => x.symbol === item.symbol);
+                    const isUp1d = (item.change_1d_pct ?? 0) >= 0;
+                    const horizons = [
+                      item.change_1d_pct,
+                      item.change_5d_pct,
+                      item.change_1m_pct,
+                      item.change_6m_pct,
+                      item.change_ytd_pct,
+                    ];
+                    return (
+                      <tr
+                        key={item.symbol}
+                        onClick={() => onOpenStockDetail(item.symbol)}
+                        className="cursor-pointer transition-colors hover:bg-zinc-100/80 dark:hover:bg-white/[0.06]"
+                      >
+                        <td className="px-3 py-2.5 font-sans">
+                          <div className="flex items-center gap-2.5">
+                            <StockLogoBadge symbol={item.symbol} size={30} />
+                            <div className="min-w-0">
+                              <div className="max-w-[145px] truncate text-sm font-semibold text-zinc-950 dark:text-zinc-50">
+                                {item.name}
+                              </div>
+                              <div className="font-mono text-[11px] font-medium text-zinc-700 dark:text-zinc-300">
+                                {item.symbol} · {item.exchange}
+                              </div>
+                            </div>
+                          </div>
+                        </td>
+                        <td className="px-2 py-2.5">
+                          <div className="flex justify-center">
+                            <MiniKLineSparkline
+                              bars={item.sparkline_bars}
+                              prevClose={item.prev_close}
+                              isUp={isUp1d}
+                              width={56}
+                              height={22}
+                            />
+                          </div>
+                        </td>
+                        <td className="px-2.5 py-2.5 text-right text-sm font-bold text-zinc-950 dark:text-zinc-50">
+                          {fmtUsd(item.price)}
+                        </td>
+                        {horizons.map((val, hIdx) => (
+                          <td
+                            key={hIdx}
+                            className={`px-2 py-2.5 text-right font-semibold ${
+                              val === null || val === undefined
+                                ? "text-zinc-600 dark:text-zinc-300"
+                                : val >= 0
+                                  ? "text-emerald-700 dark:text-emerald-400"
+                                  : "text-rose-700 dark:text-rose-400"
+                            }`}
+                          >
+                            {fmtPct(val)}
+                          </td>
+                        ))}
+                        <td className="px-2 py-2.5 text-right font-semibold text-zinc-800 dark:text-zinc-200">
+                          {item.rsi_14 != null ? item.rsi_14.toFixed(1) : "—"}
+                        </td>
+                        {manageMode && (
+                          <td
+                            className="px-2.5 py-2.5 text-right"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            <div className="inline-flex items-center gap-1">
+                              {origIdx >= 0 && (
+                                <>
+                                  <button
+                                    type="button"
+                                    onClick={() => void moveOrder(origIdx, -1)}
+                                    disabled={mutating || origIdx === 0}
+                                    title="上移"
+                                    className="rounded border border-zinc-300 bg-white p-1 text-zinc-800 disabled:opacity-35 dark:border-white/15 dark:bg-zinc-900 dark:text-zinc-100"
+                                  >
+                                    <ArrowUp className="h-3 w-3" />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => void moveOrder(origIdx, 1)}
+                                    disabled={mutating || origIdx === items.length - 1}
+                                    title="下移"
+                                    className="rounded border border-zinc-300 bg-white p-1 text-zinc-800 disabled:opacity-35 dark:border-white/15 dark:bg-zinc-900 dark:text-zinc-100"
+                                  >
+                                    <ArrowDown className="h-3 w-3" />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => void onRemoveSymbol(item.symbol)}
+                                    disabled={mutating}
+                                    title="删除"
+                                    className="rounded border border-rose-300 bg-rose-50 p-1 text-rose-700 dark:border-rose-500/40 dark:bg-rose-950/60 dark:text-rose-300"
+                                  >
+                                    <Trash2 className="h-3 w-3" />
+                                  </button>
+                                </>
+                              )}
+                            </div>
+                          </td>
+                        )}
+                      </tr>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
+          </div>
+        </SpotlightBlock>
+
+        {/* Right Side: Normalized Multi-Stock Percentage Comparison Chart (Figure 5) */}
+        <SpotlightBlock tone="gallery" className="space-y-3 p-4 xl:col-span-6">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <div className="font-mono text-xs font-semibold tracking-wider text-zinc-700 dark:text-zinc-300">
@@ -844,6 +851,7 @@ export default function WatchlistWorkspace({
           })}
         </div>
       </SpotlightBlock>
+      </div>
     </main>
   );
 }
