@@ -23,6 +23,11 @@ from app.core.telemetry import init_phoenix_telemetry
 from app.db.models import UserWatchlistItem
 from app.db.session import create_db_engine, create_session_factory
 from app.mcp_servers.market_server import build_market_mcp_server, configure_mcp_dependencies
+from app.services.news_discover import (
+    shutdown_discover_tasks,
+    startup_discover_warmup,
+)
+from app.services.resilience import DualTTLCache
 
 
 def create_app() -> FastAPI:
@@ -52,9 +57,17 @@ def create_app() -> FastAPI:
         app.state.session_factory = session_factory
         app.state.mcp = app_mcp
         async with app_mcp.session_manager.run():
+            warmup_task: asyncio.Task[None] | None = None
+            if not os.environ.get("PYTEST_CURRENT_TEST") and infra.redis is not None:
+                warmup_task = asyncio.create_task(
+                    startup_discover_warmup(DualTTLCache(infra.redis), settings)
+                )
             try:
                 yield
             finally:
+                if warmup_task is not None and not warmup_task.done():
+                    warmup_task.cancel()
+                await shutdown_discover_tasks()
                 await db_engine.dispose()
                 await infra.shutdown()
 

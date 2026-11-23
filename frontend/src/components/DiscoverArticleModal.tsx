@@ -248,7 +248,7 @@ export default function DiscoverArticleModal({
               <div className="space-y-3 py-2">
                 <div className="flex items-center gap-2 font-mono text-xs text-zinc-700 dark:text-zinc-300">
                   <BookOpen className="h-3.5 w-3.5 animate-pulse text-emerald-500" />
-                  <span>正在站内拉取原文并免费实时译制中文段落（0 LLM 额度消耗）...</span>
+                  <span>正在站内拉取原文并译制成中文段落...</span>
                 </div>
                 {[0, 1, 2, 3].map((i) => (
                   <div

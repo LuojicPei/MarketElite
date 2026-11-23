@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 from datetime import date, datetime, timedelta, timezone
@@ -24,6 +25,7 @@ from app.services.news_discover import (
     get_discover_article_image,
     is_editorial_photo_url,
     make_article_id,
+    pretranslate_discover_articles,
 )
 from app.services.pipeline import OVERVIEW_CACHE_KEY
 from app.services.providers.macro_feeds import MacroFeedsClient
@@ -555,6 +557,61 @@ def test_extract_article_structure_expands_readmore_and_strips_ads() -> None:
     )
     polished_anth = polish_finance_zh("1. 人为IPO套现", "1. Anthropic IPO cash-out")
     assert "Anthropic" in polished_anth
+
+
+async def test_pretranslate_discover_articles_populates_cache_and_coalesces() -> None:
+    fake_redis = InMemoryFakeRedis()
+    cache = DualTTLCache(fake_redis)
+    art_id = make_article_id("https://www.cnbc.com/2026/prewarm.html", "Prewarm Story")
+    await cache.write_envelope(
+        f"{_META_PREFIX}{art_id}",
+        payload={
+            "id": art_id,
+            "title_zh": "标普 500 预热测试",
+            "headline_en": "Prewarm Story",
+            "category_zh": "美股大盘",
+            "source": "CNBC",
+            "sources": ["CNBC"],
+            "source_count": 1,
+            "url": "https://www.cnbc.com/2026/prewarm.html",
+            "image_proxy_url": f"/api/market/discover/{art_id}/image",
+            "published_at": datetime.now(timezone.utc).isoformat(),
+            "related_articles": [],
+            "pre_extracted_blocks": [
+                {"type": "paragraph", "en": "Equities rebounded sharply on Tuesday morning."},
+                {"type": "paragraph", "en": "Tech megacaps led the recovery across Wall Street."},
+                {"type": "paragraph", "en": "Treasury yields stabilized following macro data."},
+            ],
+        },
+        source="news_discover",
+        soft_ttl_seconds=600,
+        hard_ttl_seconds=3600,
+    )
+
+    translate_calls = 0
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        nonlocal translate_calls
+        if "clients5.google.com/translate_a/t" in str(req.url):
+            translate_calls += 1
+            return httpx.Response(
+                200,
+                json=["周二早盘股市大幅反弹。", "科技巨头领涨华尔街。", "宏观数据公布后美债收益率趋稳。"],
+            )
+        return httpx.Response(404)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        # Concurrent calls on same article_id coalesce into 1 translation batch
+        r1, r2 = await asyncio.gather(
+            get_discover_article_detail(art_id, cache, http_client=client),
+            get_discover_article_detail(art_id, cache, http_client=client),
+        )
+        assert r1 is not None and r2 is not None
+        assert translate_calls == 1
+        warmed = await pretranslate_discover_articles([art_id], cache, http_client=client)
+        assert warmed == 1
+        assert translate_calls == 1  # Already warm in Redis cache!
+
 
 
 

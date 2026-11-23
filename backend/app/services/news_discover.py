@@ -28,6 +28,10 @@ _ARTICLE_PREFIX = "marketelite:news:article:v5:"
 _IMG_URL_PREFIX = "marketelite:news:imgurl:"
 _IMG_BYTES_PREFIX = "marketelite:news:imgbytes:"
 
+_PREWARM_TASKS: set[asyncio.Task[Any]] = set()
+_ACTIVE_PREWARM_IDS: set[str] = set()
+_INFLIGHT_ARTICLE_TASKS: dict[str, tuple[asyncio.AbstractEventLoop, asyncio.Task[dict[str, Any] | None]]] = {}
+
 _LOGO_URL_BLOCKLIST = (
     "finnhub/logo",
     "reuters_logo",
@@ -593,9 +597,11 @@ async def get_or_refresh_discover_news(
     force_refresh: bool = False,
     bypass_cooldown: bool = False,
     verify_full_text: bool | None = None,
+    pretranslate_bg: bool | None = None,
     http_client: httpx.AsyncClient | None = None,
 ) -> dict[str, Any]:
-    """Return cached zero-LLM Chinese Discover news items with cooldown guard against public spam."""
+    """Return cached zero-LLM Chinese Discover news items and silently pre-translate bodies in background."""
+    should_prewarm = pretranslate_bg if pretranslate_bg is not None else (http_client is None)
     if not force_refresh or not bypass_cooldown:
         cached = await cache.read_envelope(DISCOVER_CACHE_KEY)
         if cached and isinstance(cached.get("payload"), dict):
@@ -603,6 +609,8 @@ async def get_or_refresh_discover_news(
             items = list(payload.get("items") or [])[:limit]
             if items:
                 if not force_refresh and not cached.get("is_stale"):
+                    if should_prewarm:
+                        schedule_discover_pretranslate([str(it.get("id", "")) for it in items], cache)
                     return {
                         "status": "ok",
                         "cache_source": "redis",
@@ -614,6 +622,8 @@ async def get_or_refresh_discover_news(
                 if force_refresh and not bypass_cooldown:
                     cooldown = await cache.read_envelope(DISCOVER_COOLDOWN_KEY)
                     if cooldown and not cooldown.get("is_stale"):
+                        if should_prewarm:
+                            schedule_discover_pretranslate([str(it.get("id", "")) for it in items], cache)
                         return {
                             "status": "ok",
                             "cache_source": "redis_cooldown",
@@ -741,6 +751,8 @@ async def get_or_refresh_discover_news(
                 hard_ttl_seconds=300,
             ),
         )
+        if should_prewarm:
+            schedule_discover_pretranslate([str(it.get("id", "")) for it in shelf_items], cache)
         return {
             "status": "ok",
             "cache_source": "live",
@@ -1017,13 +1029,13 @@ def extract_article_paragraphs(html_text: str) -> tuple[list[str], bool]:
     return paras[:22], paywall
 
 
-async def get_discover_article_detail(
+async def _compute_and_cache_article_detail(
     article_id: str,
     cache: DualTTLCache,
     *,
     http_client: httpx.AsyncClient | None = None,
 ) -> dict[str, Any] | None:
-    """Fetch, extract, and zero-LLM translate structured editorial blocks (aligned EN/ZH) for the reading modal."""
+    """Compute, free-translate, and cache structured editorial blocks for a single article."""
     art_cache_key = f"{_ARTICLE_PREFIX}{article_id}"
     cached = await cache.read_envelope(art_cache_key)
     if cached and isinstance(cached.get("payload"), dict) and not cached.get("is_stale"):
@@ -1153,6 +1165,130 @@ async def get_discover_article_detail(
         )
 
     return result
+
+
+async def get_discover_article_detail(
+    article_id: str,
+    cache: DualTTLCache,
+    *,
+    http_client: httpx.AsyncClient | None = None,
+) -> dict[str, Any] | None:
+    """Return structured bilingual article blocks, coalescing concurrent user/background requests."""
+    art_cache_key = f"{_ARTICLE_PREFIX}{article_id}"
+    cached = await cache.read_envelope(art_cache_key)
+    if cached and isinstance(cached.get("payload"), dict) and not cached.get("is_stale"):
+        return {**cached["payload"], "cached": True}
+
+    loop = asyncio.get_running_loop()
+    existing = _INFLIGHT_ARTICLE_TASKS.get(article_id)
+    if existing is not None and existing[0] is loop and not existing[1].done():
+        return await asyncio.shield(existing[1])
+
+    task = loop.create_task(
+        _compute_and_cache_article_detail(article_id, cache, http_client=http_client)
+    )
+    _INFLIGHT_ARTICLE_TASKS[article_id] = (loop, task)
+    try:
+        return await asyncio.shield(task)
+    finally:
+        cur = _INFLIGHT_ARTICLE_TASKS.get(article_id)
+        if cur is not None and cur[1] is task:
+            _INFLIGHT_ARTICLE_TASKS.pop(article_id, None)
+
+
+async def pretranslate_discover_articles(
+    article_ids: list[str],
+    cache: DualTTLCache,
+    *,
+    concurrency: int = 2,
+    http_client: httpx.AsyncClient | None = None,
+) -> int:
+    """Pre-translate Discover article bodies sequentially/bounded in priority order for instant modal opens."""
+    cleaned_ids = [aid.strip() for aid in article_ids if aid and aid.strip()]
+    if not cleaned_ids:
+        return 0
+
+    sem = asyncio.Semaphore(max(1, concurrency))
+    warmed = 0
+
+    async def _warm_one(aid: str) -> None:
+        nonlocal warmed
+        async with sem:
+            try:
+                res = await get_discover_article_detail(aid, cache, http_client=http_client)
+                if res and res.get("status") == "ok":
+                    warmed += 1
+            except (httpx.HTTPError, ValueError, TypeError, OSError) as exc:
+                logger.debug("Pre-translate skipped for %s: %s", aid, exc)
+
+    # First prioritize Slide 1 (top 3 cards) before warming remaining carousel slides
+    front_batch = cleaned_ids[:3]
+    rest_batch = cleaned_ids[3:]
+    await asyncio.gather(*(_warm_one(aid) for aid in front_batch), return_exceptions=True)
+    if rest_batch:
+        await asyncio.gather(*(_warm_one(aid) for aid in rest_batch), return_exceptions=True)
+    return warmed
+
+
+def schedule_discover_pretranslate(article_ids: list[str], cache: DualTTLCache) -> None:
+    """Spawn non-blocking background pre-translation task while deduplicating already active IDs."""
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return
+
+    pending_ids = [aid.strip() for aid in article_ids if aid and aid.strip() and aid not in _ACTIVE_PREWARM_IDS]
+    if not pending_ids:
+        return
+
+    _ACTIVE_PREWARM_IDS.update(pending_ids)
+
+    async def _runner() -> None:
+        try:
+            await pretranslate_discover_articles(pending_ids, cache, concurrency=2)
+        except asyncio.CancelledError:
+            raise
+        except (httpx.HTTPError, ValueError, TypeError, OSError) as exc:
+            logger.debug("Discover background pre-translate halted: %s", exc)
+        finally:
+            for aid in pending_ids:
+                _ACTIVE_PREWARM_IDS.discard(aid)
+
+    task = loop.create_task(_runner())
+    _PREWARM_TASKS.add(task)
+    task.add_done_callback(_PREWARM_TASKS.discard)
+
+
+async def startup_discover_warmup(cache: DualTTLCache, settings: Settings) -> None:
+    """Warm homepage Discover headlines and full article translations immediately on API startup."""
+    try:
+        await asyncio.sleep(1.0)
+        res = await get_or_refresh_discover_news(
+            cache,
+            settings,
+            limit=12,
+            force_refresh=False,
+            pretranslate_bg=False,
+        )
+        ids = [str(it.get("id", "")) for it in (res.get("items") or [])]
+        if ids:
+            await pretranslate_discover_articles(ids, cache, concurrency=2)
+    except asyncio.CancelledError:
+        raise
+    except (httpx.HTTPError, ValueError, TypeError, OSError) as exc:
+        logger.warning("Startup Discover warmup skipped: %s", exc)
+
+
+async def shutdown_discover_tasks() -> None:
+    """Cancel any active Discover pre-warm background tasks cleanly on shutdown."""
+    tasks = list(_PREWARM_TASKS)
+    for t in tasks:
+        t.cancel()
+    if tasks:
+        await asyncio.gather(*tasks, return_exceptions=True)
+    _PREWARM_TASKS.clear()
+    _ACTIVE_PREWARM_IDS.clear()
+    _INFLIGHT_ARTICLE_TASKS.clear()
 
 
 def fallback_editorial_svg(label: str = "MarketElite") -> bytes:

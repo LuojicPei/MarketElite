@@ -103,7 +103,7 @@ export default function DiscoverNewsShelf({
             发现 · 全球市场重要资讯
           </h2>
           <span className="rounded-full border border-zinc-300/90 bg-white/90 px-2.5 py-0.5 font-mono text-[11px] font-semibold text-zinc-800 dark:border-white/20 dark:bg-white/[0.08] dark:text-zinc-100">
-            零额度中文直译 · 站内速读
+            全中文速读 · 实时要闻
           </span>
         </div>
 
