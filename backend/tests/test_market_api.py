@@ -16,7 +16,9 @@ from app.services.news_discover import (
     _META_PREFIX,
     DISCOVER_CACHE_KEY,
     DISCOVER_COOLDOWN_KEY,
+    _infer_category_zh,
     extract_article_paragraphs,
+    extract_article_structure,
     fetch_discover_candidates,
     get_discover_article_detail,
     get_discover_article_image,
@@ -501,8 +503,60 @@ async def test_verify_full_text_filters_paywall_and_short_stubs() -> None:
         )
     assert len(items) == 1
     assert "open-full-article.html" in items[0]["url"]
-    assert len(items[0]["pre_extracted_en"]) == 4
-    assert "&amp;" not in items[0]["pre_extracted_en"][1]
+    assert len(items[0]["pre_extracted_blocks"]) == 4
+    assert "&amp;" not in items[0]["pre_extracted_blocks"][1]["en"]
+
+
+def test_extract_article_structure_expands_readmore_and_strips_ads() -> None:
+    yahoo_like_html = """
+    <html><body>
+      <div class="RenderKeyPoints-list">
+        <ul>
+          <li>S&amp;P 500 entered correction territory after five consecutive weeks of declines.</li>
+          <li>Federal Reserve officials flagged patience on rate cuts ahead of core PCE data.</li>
+        </ul>
+      </div>
+      <div class="body yf-v6n2s3">
+        <div class="bodyItems-wrapper">
+          <p>HTML_TAG_START Despite solid earnings, <strong>Nvidia</strong> fell sharply amid export curbs. HTML_TAG_END</p>
+          <p>Released: The Definitive Guide to Retirement Income from Fisher Investments. Learn More Here › (sponsor)</p>
+          <h2>1. Why yields jumped</h2>
+          <p>Treasury yields rose sharply on sticky inflation expectations and sovereign debt supply.</p>
+        </div>
+        <div class="readmore yf-11souuj"><button class="readmore-button"><span>Story Continues</span></button></div>
+        <div class="read-more-wrapper" data-testid="read-more">
+          <h2>2. Institutional positioning</h2>
+          <p>Hedge funds reduced gross leverage while rotating defensively into consumer staples and utilities.</p>
+          <blockquote>"Investors should stay disciplined when volatility spikes across mega-cap tech."</blockquote>
+          <h2>Should you buy stock in Nvidia right now?</h2>
+          <p>Before you buy stock in Nvidia, consider this: The Motley Fool Stock Advisor team picked 10 best stocks.</p>
+        </div>
+      </div>
+    </body></html>
+    """
+    blocks, paywall = extract_article_structure(yahoo_like_html)
+    assert paywall is False
+    types = [b["type"] for b in blocks]
+    assert types == ["callout", "paragraph", "heading", "paragraph", "heading", "paragraph", "quote"]
+    assert len(blocks[0]["items_en"]) == 2
+    assert "HTML_TAG_START" not in blocks[1]["en"]
+    assert "<b>Nvidia</b>" in blocks[1]["en"]
+    # Fisher Investments sponsor promo and Motley Fool trailing pitch must be excluded
+    all_text = " ".join(
+        [str(b.get("en", "")) for b in blocks]
+        + [" ".join(b.get("items_en", [])) for b in blocks]
+    )
+    assert "Fisher Investments" not in all_text
+    assert "Motley Fool Stock Advisor" not in all_text
+    assert "Institutional positioning" in all_text
+    assert (
+        _infer_category_zh("Saudi Arabia, Bahrain report new attacks as Iran remains open to a deal")
+        == "地缘与能源"
+    )
+    polished_anth = polish_finance_zh("1. 人为IPO套现", "1. Anthropic IPO cash-out")
+    assert "Anthropic" in polished_anth
+
+
 
 
 

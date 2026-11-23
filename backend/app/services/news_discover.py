@@ -13,7 +13,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 import httpx
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, NavigableString, Tag
 
 from app.core.config import Settings
 from app.services.free_translate import translate_en_to_zh_free
@@ -21,10 +21,10 @@ from app.services.resilience import DualTTLCache
 
 logger = logging.getLogger(__name__)
 
-DISCOVER_CACHE_KEY = "marketelite:news:discover:v3"
-DISCOVER_COOLDOWN_KEY = "marketelite:news:discover:cooldown:v3"
-_META_PREFIX = "marketelite:news:meta:v3:"
-_ARTICLE_PREFIX = "marketelite:news:article:v3:"
+DISCOVER_CACHE_KEY = "marketelite:news:discover:v5"
+DISCOVER_COOLDOWN_KEY = "marketelite:news:discover:cooldown:v5"
+_META_PREFIX = "marketelite:news:meta:v5:"
+_ARTICLE_PREFIX = "marketelite:news:article:v5:"
 _IMG_URL_PREFIX = "marketelite:news:imgurl:"
 _IMG_BYTES_PREFIX = "marketelite:news:imgbytes:"
 
@@ -55,6 +55,7 @@ _LIFESTYLE_NOISE_PATTERNS = (
 _BOILERPLATE_PREFIXES = (
     "in this article",
     "watch live",
+    "watch now",
     "read more",
     "sign up for",
     "subscribe to",
@@ -69,6 +70,37 @@ _BOILERPLATE_PREFIXES = (
     "recommended stories",
     "this article was originally",
     "for more information",
+    "image source:",
+    "https://",
+    "http://",
+)
+
+_TERMINAL_PROMO_MARKERS = (
+    "should you buy stock in",
+    "before you buy stock in",
+    "related:",
+    "related stories",
+    "read next:",
+    "read the original story",
+    "recommended stories",
+    "for updates and corrections, email",
+)
+
+_PROMO_AD_SUBSTRINGS = (
+    "(sponsor)",
+    "(sponsored)",
+    "fisher investments",
+    "learn more here",
+    "continue »",
+    "see the 10 stocks",
+    "stock advisor returns as of",
+    "motley fool stock advisor",
+    "consider when netflix made this list",
+    "get the stocktwits daily rip",
+    "missed ai's \"act 1\"",
+    "has no position in any of the stocks mentioned",
+    "the motley fool has a disclosure policy",
+    "has positions in any of the stocks",
 )
 
 _BLOCKED_CARD_URL_MARKERS = (
@@ -173,16 +205,16 @@ def _parse_iso_ts(raw_val: Any) -> datetime:
 
 def _infer_category_zh(headline: str) -> str:
     low = headline.lower()
-    if any(k in low for k in ("fed", "rate", "yield", "treasury", "inflation", "cpi", "pce")):
+    if re.search(r"\b(?:fed|federal reserve|rates?|yields?|treasury|inflation|cpi|pce|fomc)\b", low):
         return "利率与政策"
-    if any(
-        k in low
-        for k in ("ai", "nvidia", "chip", "gpu", "semiconductor", "openai", "anthropic", "gemini", "apple")
+    if re.search(r"\b(?:oil|crude|brent|iran|iranian|opec|saudi|tariff|tariffs|war|strikes?)\b", low):
+        return "地缘与能源"
+    if re.search(
+        r"\b(?:ai|artificial intelligence|nvidia|nvda|chips?|gpus?|semiconductors?|openai|anthropic|gemini|apple)\b",
+        low,
     ):
         return "科技与 AI"
-    if any(k in low for k in ("oil", "iran", "opec", "saudi", "tariff", "trade", "china", "war")):
-        return "地缘与能源"
-    if any(k in low for k in ("s&p", "nasdaq", "dow", "wall street", "rally", "sell-off", "correction", "hedge fund")):
+    if re.search(r"(?:\bs&p\b|\bnasdaq\b|\bdow\b|\bwall street\b|\brally\b|\bsell-off\b|\bcorrection\b|\bhedge funds?\b|\bdividend stocks?\b)", low):
         return "美股大盘"
     return "宏观要闻"
 
@@ -300,17 +332,18 @@ async def _verify_candidate_media_and_text(
     *,
     verify_images: bool,
     verify_full_text: bool,
-) -> tuple[bool, list[str]]:
+) -> tuple[bool, list[dict[str, Any]]]:
     img_task = _verify_image_url(client, item["image_url"]) if verify_images else asyncio.sleep(0, result=True)
     if verify_full_text:
         html_task = _scrape_article_html(client, item["url"])
         img_ok, raw_html = await asyncio.gather(img_task, html_task, return_exceptions=True)
         if img_ok is not True or not isinstance(raw_html, str) or not raw_html:
             return False, []
-        paras, paywall = extract_article_paragraphs(raw_html)
-        if paywall or len(paras) < 4:
+        blocks, paywall = extract_article_structure(raw_html)
+        content_blocks = [b for b in blocks if b["type"] in {"paragraph", "list", "quote"}]
+        if paywall or len(content_blocks) < 4:
             return False, []
-        return True, paras
+        return True, blocks
     img_ok = await img_task
     return bool(img_ok is True), []
 
@@ -535,10 +568,10 @@ async def fetch_discover_candidates(
             for item, res in zip(top_pool, checks, strict=False):
                 if isinstance(res, BaseException):
                     continue
-                ok, paras = res
+                ok, blocks = res
                 if ok:
-                    if paras:
-                        item["pre_extracted_en"] = paras
+                    if blocks:
+                        item["pre_extracted_blocks"] = blocks
                     verified.append(item)
             if verify_full_text and verified:
                 return verified[:18]
@@ -660,7 +693,7 @@ async def get_or_refresh_discover_news(
             "image_proxy_url": f"/api/market/discover/{item['id']}/image",
             "published_at": item["published_at"],
             "related_articles": rel_items,
-            "pre_extracted_en": item.get("pre_extracted_en") or [],
+            "pre_extracted_blocks": item.get("pre_extracted_blocks") or [],
         }
         final_items.append(clean_item)
 
@@ -689,7 +722,7 @@ async def get_or_refresh_discover_news(
     if final_items:
         # Strip heavy/internal fields from public shelf response to keep homepage JSON slim
         shelf_items = [
-            {k: v for k, v in it.items() if k not in {"summary_en", "pre_extracted_en"}}
+            {k: v for k, v in it.items() if k not in {"summary_en", "pre_extracted_blocks"}}
             for it in final_items
         ]
         await asyncio.gather(
@@ -740,13 +773,69 @@ async def get_or_refresh_discover_news(
 
 
 def _clean_paragraph_text(text: str) -> str:
-    return " ".join(html.unescape(str(text or "")).split())
+    cleaned = html.unescape(str(text or ""))
+    cleaned = re.sub(r"\bHTML_TAG_(?:START|END)\b", " ", cleaned)
+    return " ".join(cleaned.split())
 
 
-def extract_article_paragraphs(html_text: str) -> tuple[list[str], bool]:
-    """Extract readable article body paragraphs cleanly from CNBC/Yahoo/news HTML.
+def _plain_text(serialized: str) -> str:
+    return _clean_paragraph_text(re.sub(r"</?b>", "", serialized))
 
-    Returns (paragraphs, paywall_detected).
+
+def _is_promo_or_boilerplate(plain_txt: str) -> bool:
+    low = plain_txt.lower()
+    if any(low.startswith(pref) for pref in _BOILERPLATE_PREFIXES):
+        return True
+    return any(sub in low for sub in _PROMO_AD_SUBSTRINGS)
+
+
+def _hits_terminal_promo(plain_txt: str) -> bool:
+    low = plain_txt.lower()
+    return any(low.startswith(m) for m in _TERMINAL_PROMO_MARKERS)
+
+
+def _serialize_inline_bold(node: Tag) -> tuple[str, int]:
+    """Serialize Tag into clean plain text preserving real inline <strong>/<b> emphasis as <b>...</b>."""
+    parts: list[str] = []
+    bold_chars = 0
+
+    def _walk(el: Any, inside_bold: bool = False) -> None:
+        nonlocal bold_chars
+        if isinstance(el, NavigableString):
+            txt = html.unescape(str(el))
+            if txt:
+                parts.append(txt)
+                if inside_bold:
+                    bold_chars += len(txt.strip())
+            return
+        if not isinstance(el, Tag):
+            return
+        name = el.name.lower()
+        if name in {"script", "style", "svg", "button", "figure", "figcaption"}:
+            return
+        if name in {"strong", "b"} and not inside_bold:
+            inner_txt = _clean_paragraph_text(el.get_text(" ", strip=True))
+            if inner_txt:
+                parts.append(f"<b>{inner_txt}</b>")
+                bold_chars += len(inner_txt)
+            return
+        for child in el.children:
+            _walk(child, inside_bold)
+
+    _walk(node)
+    joined = _clean_paragraph_text("".join(parts))
+    joined = re.sub(r"<b>\s+", "<b>", joined)
+    joined = re.sub(r"\s+</b>", "</b>", joined)
+    joined = re.sub(r"([A-Za-z0-9,;:])<b>", r"\1 <b>", joined)
+    joined = re.sub(r"</b>([A-Za-z0-9])", r"</b> \1", joined)
+    return joined, bold_chars
+
+
+def extract_article_structure(html_text: str) -> tuple[list[dict[str, Any]], bool]:
+    """Extract clean, structured editorial blocks (callout, heading, quote, list, paragraph) without ads/clutter.
+
+    Expands Yahoo 'read-more-wrapper' sections automatically and preserves inline <b> emphasis.
+    Returns (blocks, paywall_detected).
     """
     if not html_text:
         return [], False
@@ -754,42 +843,150 @@ def extract_article_paragraphs(html_text: str) -> tuple[list[str], bool]:
     paywall = any(marker in low_all for marker in _PAYWALL_MARKERS)
 
     soup = BeautifulSoup(html_text, "html.parser")
-    for junk in soup.select("script, style, nav, footer, aside, header, noscript, figure"):
+
+    # 1. Extract CNBC executive Key Points callout before stripping article widgets
+    key_points_en: list[str] = []
+    seen_plain: set[str] = set()
+    for kp_node in soup.select("div.RenderKeyPoints-list li, div[data-testid='key-points'] li"):
+        txt = _clean_paragraph_text(kp_node.get_text(" ", strip=True))
+        if len(txt) >= 15 and txt.lower() not in seen_plain and not _is_promo_or_boilerplate(txt):
+            seen_plain.add(txt.lower())
+            key_points_en.append(txt)
+
+    # 2. Clean non-article chrome, inline ads, videos, and 'Story Continues' button wrappers (keep read-more-wrapper!)
+    for junk in soup.select(
+        "script, style, nav, footer, aside, header, noscript, figure, figcaption, button, form, iframe, svg,"
+        "[class*='RelatedQuotes'], [class*='InlineVideo'], [class*='InlineImage'], [class*='MobileAdhesion'],"
+        "[class*='RenderKeyPoints'], [data-testid='key-points'], [class*='Promo'], [class*='Recirculation'],"
+        "[data-testid='inarticle-ad'], [data-testid='ad-container'], [class*='sdaContainer'],"
+        "[class*='caas-da'], [class*='caas-readmore'], [class*='image-container'], [class*='image-wrapper']"
+    ):
         junk.decompose()
 
-    selectors = (
-        "div.ArticleBody-articleBody p, div[data-module='ArticleBody'] p",
-        "div.caas-body p, div.atoms-wrapper p",
-        "div.article-body p, div.entry-content p, main article p, article p",
-    )
-    paras: list[str] = []
-    seen_low: set[str] = set()
-    for sel in selectors:
-        nodes = soup.select(sel)
-        for node in nodes:
-            txt = _clean_paragraph_text(node.get_text(" ", strip=True))
-            if len(txt) < 35:
-                continue
-            txt_low = txt.lower()
-            if any(txt_low.startswith(pref) for pref in _BOILERPLATE_PREFIXES):
-                continue
-            if txt_low in seen_low:
-                continue
-            seen_low.add(txt_low)
-            paras.append(txt)
-        if len(paras) >= 3:
+    for el in list(soup.find_all(class_=True)):
+        cls_str = " ".join(el.get("class") or []).lower()
+        if "readmore" in cls_str and "read-more-wrapper" not in cls_str:
+            el.decompose()
+
+    root: Tag | None = None
+    for sel in (
+        "div.ArticleBody-articleBody",
+        "div[data-module='ArticleBody']",
+        "div.body",
+        "div.caas-body",
+        "div.atoms-wrapper",
+        "div.article-body",
+        "main article",
+        "article",
+    ):
+        found = soup.select_one(sel)
+        if found is not None:
+            root = found
             break
 
-    # Fallback: parse Schema.org JSON-LD articleBody if DOM paragraphs missing
-    if len(paras) < 3:
+    blocks: list[dict[str, Any]] = []
+    if key_points_en:
+        blocks.append({"type": "callout", "items_en": key_points_en[:6]})
+
+    if root is not None:
+        stop_walking = False
+
+        def _visit(container: Tag) -> None:
+            nonlocal stop_walking
+            if stop_walking or len(blocks) >= 36:
+                return
+            for child in container.children:
+                if stop_walking or len(blocks) >= 36:
+                    return
+                if not isinstance(child, Tag):
+                    continue
+                tag_name = child.name.lower()
+
+                if tag_name in {"h2", "h3", "h4"}:
+                    h_txt = _clean_paragraph_text(child.get_text(" ", strip=True))
+                    if not h_txt or len(h_txt) < 4:
+                        continue
+                    if _hits_terminal_promo(h_txt):
+                        stop_walking = True
+                        return
+                    if _is_promo_or_boilerplate(h_txt) or h_txt.lower() in seen_plain:
+                        continue
+                    seen_plain.add(h_txt.lower())
+                    blocks.append({"type": "heading", "en": h_txt})
+                    continue
+
+                if tag_name == "blockquote":
+                    q_txt = _clean_paragraph_text(child.get_text(" ", strip=True))
+                    if len(q_txt) >= 18 and not _is_promo_or_boilerplate(q_txt) and q_txt.lower() not in seen_plain:
+                        seen_plain.add(q_txt.lower())
+                        blocks.append({"type": "quote", "en": q_txt})
+                    continue
+
+                if tag_name in {"ul", "ol"}:
+                    li_items: list[str] = []
+                    for li in child.find_all("li", recursive=False):
+                        li_rich, _ = _serialize_inline_bold(li)
+                        li_plain = _plain_text(li_rich)
+                        if len(li_plain) < 15 or _is_promo_or_boilerplate(li_plain):
+                            continue
+                        if _hits_terminal_promo(li_plain):
+                            stop_walking = True
+                            break
+                        if li_plain.lower() not in seen_plain:
+                            seen_plain.add(li_plain.lower())
+                            li_items.append(li_rich)
+                    if li_items:
+                        # Promote Yahoo's opening bullet summary right into callout box if none yet
+                        has_body_yet = any(b["type"] in {"paragraph", "heading"} for b in blocks)
+                        if not has_body_yet and not key_points_en and tag_name == "ul":
+                            blocks.insert(0, {"type": "callout", "items_en": li_items[:5]})
+                        else:
+                            blocks.append({"type": "list", "ordered": tag_name == "ol", "items_en": li_items[:8]})
+                    continue
+
+                if tag_name == "p":
+                    rich_txt, bold_chars = _serialize_inline_bold(child)
+                    plain_txt = _plain_text(rich_txt)
+                    if not plain_txt:
+                        continue
+                    if _hits_terminal_promo(plain_txt):
+                        stop_walking = True
+                        return
+                    if _is_promo_or_boilerplate(plain_txt):
+                        continue
+                    # Promote standalone short all-bold paragraphs to section headings
+                    if (
+                        bold_chars >= max(6, int(len(plain_txt) * 0.8))
+                        and 6 <= len(plain_txt) <= 95
+                        and not plain_txt.endswith((".", "!", "?"))
+                    ):
+                        if plain_txt.lower() not in seen_plain:
+                            seen_plain.add(plain_txt.lower())
+                            blocks.append({"type": "heading", "en": plain_txt})
+                        continue
+                    if len(plain_txt) < 28 or plain_txt.lower() in seen_plain:
+                        continue
+                    seen_plain.add(plain_txt.lower())
+                    # Drop bold wrapper if >70% of paragraph was bolded unnecessarily
+                    final_en = plain_txt if bold_chars > len(plain_txt) * 0.7 else rich_txt
+                    blocks.append({"type": "paragraph", "en": final_en})
+                    continue
+
+                _visit(child)
+
+        _visit(root)
+
+    # JSON-LD fallback if DOM structure yielded fewer than 3 content blocks
+    body_count = sum(1 for b in blocks if b["type"] in {"paragraph", "quote", "list"})
+    if body_count < 3:
         raw_soup = BeautifulSoup(html_text, "html.parser")
         for script in raw_soup.select('script[type="application/ld+json"]'):
             try:
                 data = json.loads(script.get_text() or "{}")
             except ValueError:
                 continue
-            blocks = data if isinstance(data, list) else [data]
-            for blk in blocks:
+            ld_list = data if isinstance(data, list) else [data]
+            for blk in ld_list:
                 if not isinstance(blk, dict):
                     continue
                 body = blk.get("articleBody")
@@ -800,11 +997,23 @@ def extract_article_paragraphs(html_text: str) -> tuple[list[str], bool]:
                         if len(_clean_paragraph_text(c)) >= 40
                     ]
                     if len(chunks) >= 2:
-                        paras = chunks
+                        blocks = [{"type": "paragraph", "en": ch} for ch in chunks[:22]]
                         break
-            if len(paras) >= 3:
+            if sum(1 for b in blocks if b["type"] == "paragraph") >= 3:
                 break
 
+    return blocks, paywall
+
+
+def extract_article_paragraphs(html_text: str) -> tuple[list[str], bool]:
+    """Compatibility helper returning plain text paragraphs extracted from structured article blocks."""
+    blocks, paywall = extract_article_structure(html_text)
+    paras: list[str] = []
+    for blk in blocks:
+        if blk["type"] in {"paragraph", "quote", "heading"}:
+            paras.append(_plain_text(blk["en"]))
+        elif blk["type"] in {"callout", "list"}:
+            paras.extend(_plain_text(it) for it in (blk.get("items_en") or []))
     return paras[:22], paywall
 
 
@@ -814,7 +1023,7 @@ async def get_discover_article_detail(
     *,
     http_client: httpx.AsyncClient | None = None,
 ) -> dict[str, Any] | None:
-    """Fetch, extract, and zero-LLM translate full article paragraphs (aligned EN/ZH) for the reading modal."""
+    """Fetch, extract, and zero-LLM translate structured editorial blocks (aligned EN/ZH) for the reading modal."""
     art_cache_key = f"{_ARTICLE_PREFIX}{article_id}"
     cached = await cache.read_envelope(art_cache_key)
     if cached and isinstance(cached.get("payload"), dict) and not cached.get("is_stale"):
@@ -835,48 +1044,85 @@ async def get_discover_article_detail(
         return None
 
     target_url = str(meta.get("url") or "").strip()
-    pre_extracted = [
-        _clean_paragraph_text(str(p))
-        for p in (meta.get("pre_extracted_en") or [])
-        if len(_clean_paragraph_text(str(p))) >= 30
-    ]
-    extracted_paras: list[str] = pre_extracted
+    extracted_blocks: list[dict[str, Any]] = list(meta.get("pre_extracted_blocks") or [])
     paywall_hit = False
 
-    if len(extracted_paras) < 3 and target_url.startswith("http"):
+    content_count = sum(1 for b in extracted_blocks if b.get("type") in {"paragraph", "quote", "list"})
+    if content_count < 3 and target_url.startswith("http"):
         if http_client is not None:
             raw_html = await _scrape_article_html(http_client, target_url)
         else:
             async with httpx.AsyncClient(follow_redirects=True) as scrape_client:
                 raw_html = await _scrape_article_html(scrape_client, target_url)
-        extracted_paras, paywall_hit = extract_article_paragraphs(raw_html)
+        extracted_blocks, paywall_hit = extract_article_structure(raw_html)
+        content_count = sum(1 for b in extracted_blocks if b.get("type") in {"paragraph", "quote", "list"})
 
-    if len(extracted_paras) >= 3:
+    if content_count >= 3:
         access_status = "full"
-        en_paras = extracted_paras
+        source_blocks = extracted_blocks
     else:
         access_status = "summary_only"
         fallback_text = _clean_paragraph_text(str(meta.get("summary_en") or ""))
         if not fallback_text or len(fallback_text) < 20:
             fallback_text = _clean_paragraph_text(str(meta.get("headline_en") or ""))
-        en_paras = [fallback_text] if fallback_text else []
-        if paywall_hit and extracted_paras:
-            en_paras = extracted_paras[:2]
+        source_blocks = [{"type": "paragraph", "en": fallback_text}] if fallback_text else []
+        if paywall_hit and extracted_blocks:
+            source_blocks = extracted_blocks[:2]
 
-    zh_paras, _ = await translate_en_to_zh_free(
-        en_paras,
+    # Flatten all text slots for single batched zero-LLM translation
+    en_slots: list[str] = []
+    block_slots: list[tuple[str, int | list[int]]] = []
+    for blk in source_blocks:
+        btype = str(blk.get("type") or "paragraph")
+        if btype in {"callout", "list"}:
+            indices: list[int] = []
+            for item_en in blk.get("items_en") or []:
+                indices.append(len(en_slots))
+                en_slots.append(str(item_en))
+            block_slots.append((btype, indices))
+        else:
+            idx = len(en_slots)
+            en_slots.append(str(blk.get("en") or ""))
+            block_slots.append((btype, idx))
+
+    zh_slots, _ = await translate_en_to_zh_free(
+        en_slots,
         cache=cache,
         http_client=http_client,
     )
 
-    aligned_paragraphs = [
-        {
-            "index": idx,
-            "en": en_p,
-            "zh": zh_p,
-        }
-        for idx, (en_p, zh_p) in enumerate(zip(en_paras, zh_paras, strict=False))
-    ]
+    structured_blocks: list[dict[str, Any]] = []
+    aligned_paragraphs: list[dict[str, Any]] = []
+    for raw_blk, (btype, slot_ref) in zip(source_blocks, block_slots, strict=False):
+        if isinstance(slot_ref, list):
+            items_en = [en_slots[i] for i in slot_ref]
+            items_zh = [zh_slots[i] if i < len(zh_slots) else en_slots[i] for i in slot_ref]
+            entry: dict[str, Any] = {
+                "type": btype,
+                "items_en": items_en,
+                "items_zh": items_zh,
+            }
+            if btype == "list":
+                entry["ordered"] = bool(raw_blk.get("ordered", False))
+            structured_blocks.append(entry)
+        else:
+            en_txt = en_slots[slot_ref]
+            zh_txt = zh_slots[slot_ref] if slot_ref < len(zh_slots) else en_txt
+            structured_blocks.append(
+                {
+                    "type": btype,
+                    "en": en_txt,
+                    "zh": zh_txt,
+                }
+            )
+            if btype in {"paragraph", "quote"}:
+                aligned_paragraphs.append(
+                    {
+                        "index": len(aligned_paragraphs),
+                        "en": _plain_text(en_txt),
+                        "zh": _plain_text(zh_txt),
+                    }
+                )
 
     result = {
         "status": "ok",
@@ -891,12 +1137,13 @@ async def get_discover_article_detail(
         "image_proxy_url": meta.get("image_proxy_url") or f"/api/market/discover/{article_id}/image",
         "published_at": meta.get("published_at", ""),
         "access_status": access_status,
+        "blocks": structured_blocks,
         "paragraphs": aligned_paragraphs,
         "related_articles": meta.get("related_articles") or [],
         "cached": False,
     }
 
-    if aligned_paragraphs:
+    if structured_blocks:
         await cache.write_envelope(
             art_cache_key,
             payload=result,

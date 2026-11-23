@@ -42,6 +42,10 @@ def polish_finance_zh(zh_text: str, en_source: str) -> str:
         out = out.replace("英伟达公司", "英伟达")
     if "anthropic" in en_low:
         out = out.replace("人类学", "Anthropic")
+        if "artificial" not in en_low and "human" not in en_low and "man-made" not in en_low:
+            out = out.replace("人为", "Anthropic")
+    out = re.sub(r"<\s*b\s*>\s*", "<b>", out, flags=re.IGNORECASE)
+    out = re.sub(r"\s*<\s*/\s*b\s*>", "</b>", out, flags=re.IGNORECASE)
     return " ".join(out.split())
 
 
@@ -116,7 +120,8 @@ async def _translate_chunk_clients5(
 
 async def _translate_single_mymemory(text: str, client: httpx.AsyncClient) -> str | None:
     """Secondary fallback via MyMemory public translation API (no VPN / no API key)."""
-    clipped = text.strip()[:480]
+    plain = re.sub(r"</?b>", "", text, flags=re.IGNORECASE).strip()
+    clipped = plain[:480]
     if not clipped:
         return ""
     try:
@@ -163,7 +168,7 @@ async def translate_en_to_zh_free(
                 and isinstance(env.get("payload"), dict)
                 and env["payload"].get("zh")
             ):
-                results[idx] = str(env["payload"]["zh"])
+                results[idx] = polish_finance_zh(str(env["payload"]["zh"]), cleaned_inputs[idx])
             elif cleaned_inputs[idx]:
                 uncached_indices.append(idx)
             else:

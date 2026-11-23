@@ -8,14 +8,44 @@ import {
   ExternalLink,
   Info,
   Languages,
+  Quote,
+  Sparkles,
   X,
 } from "lucide-react";
 import {
+  DiscoverArticleBlock,
   DiscoverArticleDetail,
   DiscoverNewsItem,
   fetchDiscoverArticleDetail,
   resolveApiUrl,
 } from "@/lib/api";
+
+function RichInlineText({ text }: { text: string }) {
+  const cleaned = text.replace(/<\/?(?!b\b)[^>]*>/gi, "");
+  const parts = cleaned.split(/(<b>.*?<\/b>)/gi);
+  return (
+    <>
+      {parts.map((part, idx) => {
+        if (/^<b>.*<\/b>$/i.test(part)) {
+          const inner = part.replace(/^<b>|<\/b>$/gi, "");
+          return (
+            <strong
+              key={idx}
+              className="font-semibold text-zinc-950 dark:text-white"
+            >
+              {inner}
+            </strong>
+          );
+        }
+        return (
+          <React.Fragment key={idx}>
+            {part.replace(/<\/?b>/gi, "")}
+          </React.Fragment>
+        );
+      })}
+    </>
+  );
+}
 
 interface DiscoverArticleModalProps {
   article: DiscoverNewsItem | null;
@@ -237,6 +267,134 @@ export default function DiscoverArticleModal({
                     {article.summary_zh}
                   </p>
                 )}
+              </div>
+            ) : detail?.blocks && detail.blocks.length > 0 ? (
+              <div className="space-y-4">
+                {(() => {
+                  let seenFirstPara = false;
+                  return detail.blocks.map((blk: DiscoverArticleBlock, idx: number) => {
+                    if (blk.type === "callout" && blk.items_zh && blk.items_zh.length > 0) {
+                      return (
+                        <div
+                          key={`blk-${idx}`}
+                          className="rounded-2xl border border-emerald-500/25 bg-emerald-50/75 p-4 dark:border-emerald-400/25 dark:bg-emerald-950/25"
+                        >
+                          <div className="mb-2.5 flex items-center gap-1.5 font-mono text-xs font-bold tracking-wide text-emerald-900 dark:text-emerald-300">
+                            <Sparkles className="h-3.5 w-3.5" />
+                            <span>核心要点 · KEY TAKEAWAYS</span>
+                          </div>
+                          <ul className="space-y-2.5">
+                            {blk.items_zh.map((zhItem, liIdx) => {
+                              const enItem = blk.items_en?.[liIdx];
+                              return (
+                                <li key={liIdx} className="flex items-start gap-2.5">
+                                  <span className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-600 dark:bg-emerald-400" />
+                                  <div className="space-y-1">
+                                    <p className="font-sans text-[14.5px] font-medium leading-relaxed text-zinc-900 dark:text-zinc-100">
+                                      <RichInlineText text={zhItem} />
+                                    </p>
+                                    {bilingual && enItem && (
+                                      <p className="border-l-2 border-emerald-500/45 pl-2.5 font-sans text-[13px] leading-relaxed text-zinc-700 dark:text-zinc-300">
+                                        <RichInlineText text={enItem} />
+                                      </p>
+                                    )}
+                                  </div>
+                                </li>
+                              );
+                            })}
+                          </ul>
+                        </div>
+                      );
+                    }
+
+                    if (blk.type === "heading") {
+                      return (
+                        <div key={`blk-${idx}`} className="pt-3 pb-0.5">
+                          <h3 className="border-l-[3px] border-emerald-500 pl-3 font-sans text-[17px] font-bold leading-snug tracking-tight text-zinc-950 dark:text-white sm:text-[18px]">
+                            <RichInlineText text={blk.zh || blk.en || ""} />
+                          </h3>
+                          {bilingual && blk.en && (
+                            <p className="mt-1 pl-3.5 font-sans text-[13px] font-semibold text-zinc-600 dark:text-zinc-300">
+                              <RichInlineText text={blk.en} />
+                            </p>
+                          )}
+                        </div>
+                      );
+                    }
+
+                    if (blk.type === "quote") {
+                      return (
+                        <blockquote
+                          key={`blk-${idx}`}
+                          className="space-y-1.5 rounded-r-2xl border-l-[3px] border-zinc-400 bg-zinc-100/80 px-4 py-3 dark:border-zinc-500 dark:bg-white/[0.05]"
+                        >
+                          <div className="flex items-start gap-2">
+                            <Quote className="mt-1 h-4 w-4 shrink-0 text-zinc-500 dark:text-zinc-400" />
+                            <p className="font-serif text-[15.5px] italic leading-relaxed text-zinc-900 dark:text-zinc-100">
+                              <RichInlineText text={blk.zh || blk.en || ""} />
+                            </p>
+                          </div>
+                          {bilingual && blk.en && (
+                            <p className="pl-6 font-sans text-[13px] leading-relaxed text-zinc-700 dark:text-zinc-300">
+                              <RichInlineText text={blk.en} />
+                            </p>
+                          )}
+                        </blockquote>
+                      );
+                    }
+
+                    if (blk.type === "list" && blk.items_zh && blk.items_zh.length > 0) {
+                      return (
+                        <ul
+                          key={`blk-${idx}`}
+                          className="space-y-2 rounded-xl border border-zinc-200/80 bg-white/75 px-4 py-3 dark:border-white/10 dark:bg-white/[0.03]"
+                        >
+                          {blk.items_zh.map((zhItem, liIdx) => {
+                            const enItem = blk.items_en?.[liIdx];
+                            return (
+                              <li key={liIdx} className="flex items-start gap-2.5">
+                                <span className="mt-2 font-mono text-[11px] font-bold text-emerald-600 dark:text-emerald-400">
+                                  {blk.ordered ? `${liIdx + 1}.` : "•"}
+                                </span>
+                                <div className="space-y-1">
+                                  <p className="font-sans text-[15px] leading-relaxed text-zinc-900 dark:text-zinc-100">
+                                    <RichInlineText text={zhItem} />
+                                  </p>
+                                  {bilingual && enItem && (
+                                    <p className="border-l-2 border-emerald-500/45 pl-2.5 font-sans text-[13px] leading-relaxed text-zinc-700 dark:text-zinc-300">
+                                      <RichInlineText text={enItem} />
+                                    </p>
+                                  )}
+                                </div>
+                              </li>
+                            );
+                          })}
+                        </ul>
+                      );
+                    }
+
+                    const isLead = !seenFirstPara;
+                    seenFirstPara = true;
+                    return (
+                      <div key={`blk-${idx}`} className="space-y-1.5">
+                        <p
+                          className={`font-sans leading-[1.85] text-zinc-900 dark:text-zinc-100 ${
+                            isLead
+                              ? "text-[16px] font-medium text-zinc-950 dark:text-white"
+                              : "text-[15.5px]"
+                          }`}
+                        >
+                          <RichInlineText text={blk.zh || blk.en || ""} />
+                        </p>
+                        {bilingual && blk.en && (
+                          <p className="border-l-2 border-emerald-500/55 pl-3 font-sans text-[13.5px] leading-relaxed text-zinc-700 dark:text-zinc-300">
+                            <RichInlineText text={blk.en} />
+                          </p>
+                        )}
+                      </div>
+                    );
+                  });
+                })()}
               </div>
             ) : detail?.paragraphs && detail.paragraphs.length > 0 ? (
               <div className="space-y-4">

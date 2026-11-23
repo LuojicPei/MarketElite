@@ -397,6 +397,15 @@ export interface DiscoverArticleParagraph {
   zh: string;
 }
 
+export interface DiscoverArticleBlock {
+  type: "callout" | "heading" | "quote" | "list" | "paragraph";
+  en?: string;
+  zh?: string;
+  items_en?: string[];
+  items_zh?: string[];
+  ordered?: boolean;
+}
+
 export interface DiscoverNewsItem {
   id: string;
   title_zh: string;
@@ -425,6 +434,7 @@ export interface DiscoverArticleDetail {
   image_proxy_url: string;
   published_at: string;
   access_status: "full" | "summary_only";
+  blocks?: DiscoverArticleBlock[];
   paragraphs: DiscoverArticleParagraph[];
   related_articles: DiscoverRelatedArticle[];
   cached?: boolean;
