@@ -12,6 +12,7 @@ interface GexProfileChartProps {
   putWall: number | null;
   zeroGamma: number | null;
   height?: number;
+  fillContainer?: boolean;
 }
 
 export default function GexProfileChart({
@@ -21,6 +22,7 @@ export default function GexProfileChart({
   putWall,
   zeroGamma,
   height = 240,
+  fillContainer = false,
 }: GexProfileChartProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const { theme } = useTheme();
@@ -132,13 +134,21 @@ export default function GexProfileChart({
   if (profile.length === 0) {
     return (
       <div
-        style={{ height }}
-        className="flex items-center justify-center rounded-xl border border-zinc-200/80 bg-white/60 text-xs font-mono text-zinc-500 dark:border-white/10 dark:bg-white/[0.03] dark:text-zinc-400"
+        style={fillContainer ? undefined : { height }}
+        className={`flex items-center justify-center rounded-xl border border-zinc-200/80 bg-white/60 text-xs font-mono text-zinc-500 dark:border-white/10 dark:bg-white/[0.03] dark:text-zinc-400 ${
+          fillContainer ? "min-h-[140px] w-full flex-1" : "w-full"
+        }`}
       >
         No options Estimated GEX strikes available
       </div>
     );
   }
 
-  return <div ref={containerRef} style={{ height }} className="w-full" />;
+  return (
+    <div
+      ref={containerRef}
+      style={fillContainer ? undefined : { height }}
+      className={fillContainer ? "min-h-[140px] w-full flex-1" : "w-full"}
+    />
+  );
 }

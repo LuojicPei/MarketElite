@@ -45,15 +45,17 @@ export default function StockLogoBadge({
   return (
     <div
       style={{ width: size, height: size }}
-      className={`relative shrink-0 overflow-hidden rounded-xl border border-zinc-200/80 bg-white shadow-sm dark:border-white/15 dark:bg-zinc-900 ${className}`}
+      className={`relative shrink-0 overflow-hidden rounded-xl bg-zinc-100/80 shadow-xs dark:bg-zinc-900 ${className}`}
     >
       {!imgFailed ? (
         // eslint-disable-next-line @next/next/no-img-element
         <img
           src={getAssetLogoUrl(upper)}
           alt={`${upper} icon`}
+          loading="eager"
+          decoding="sync"
           onError={() => setImgFailed(true)}
-          className="h-full w-full object-contain p-0.5"
+          className="h-full w-full object-cover"
         />
       ) : (
         <div
@@ -63,6 +65,10 @@ export default function StockLogoBadge({
           {upper.slice(0, 4)}
         </div>
       )}
+      <span
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-0 rounded-xl ring-1 ring-inset ring-black/[0.08] dark:ring-white/[0.14]"
+      />
     </div>
   );
 }

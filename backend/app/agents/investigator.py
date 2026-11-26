@@ -29,13 +29,20 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.agents.watchdog import EpisodicMemoryRetriever
 from app.core.config import Settings
 from app.mcp_servers.market_server import (
+    compare_assets_structure,
+    get_account_positions_snapshot,
     get_asset_structure,
     get_macro_and_earnings_calendar,
     get_market_regime_snapshot,
     get_sec_filings_context,
+    get_watchdog_and_memories,
+    get_watchlist_matrix,
     mcp,
+    reset_request_broker_context,
+    set_request_broker_context,
 )
 from app.rag.hybrid_search import HybridSecRetriever
+from app.services.broker import BrokerConfig
 from app.services.llm_router import (
     LLMUnconfiguredError,
     build_fast_llm,
@@ -48,11 +55,12 @@ logger = logging.getLogger(__name__)
 
 _SYSTEM_PROMPT = """You are MarketElite Investigator, an institutional US equity market-structure analyst.
 Rules:
-1. Language & Format: Respond in clear Simplified Chinese mixed with accurate English financial terms (e.g., Estimated GEX, Zero Gamma, Call Wall, RVOL, HY OAS, 10-K/10-Q) unless the user explicitly writes solely in English. Use structured Markdown headings (`### 1. 核心判断`, `### 2. 市场结构与期权墙`, `### 3. 基本面 / SEC 依据`, `### 4. 主要风险`) and concise bullet points/tables.
-2. Ground EVERY price, indicator, macro rate, and filing citation strictly in tool outputs or injected Regime/Memory Context. Never invent prices, EPS numbers, or dates.
+1. Language & Format: Respond in clear Simplified Chinese mixed with accurate English financial terms (e.g., Estimated GEX, Zero Gamma, Call Wall, RVOL, HY OAS, 10-K/10-Q) unless the user explicitly writes solely in English. Use structured Markdown headings (`### 1. 核心判断`, `### 2. 市场结构与期权墙`, `### 3. 基本面 / 账户联动`, `### 4. 主要风险`) and concise bullet points/tables.
+2. Ground EVERY price, indicator, macro rate, account holding, and filing citation strictly in tool outputs or injected Regime/Memory Context. Never invent prices, holdings, EPS numbers, or dates.
 3. Explicitly note when referencing Estimated GEX that it relies on Dealer Positioning Assumptions & OCC T+1/T+2 OI.
 4. For deep 10-K/10-Q multi-angle audits of a company, invoke `run_sec_parallel_audit` once rather than looping repeatedly on individual SEC snippets.
-5. Never claim to execute orders; order execution is separated into Risk Critic + HITL."""
+5. You also have read-only awareness tools: use `get_account_positions_snapshot` for user holdings/equity, `get_watchlist_matrix` for watched stocks performance, `get_watchdog_and_memories` for active alerts & historical lessons, and `compare_assets_structure` for multi-ticker side-by-side audits.
+6. Never claim to execute orders; order execution is strictly separated into Risk Critic + HITL."""
 
 
 class _ParallelSecArgs(BaseModel):
@@ -61,7 +69,7 @@ class _ParallelSecArgs(BaseModel):
 
 
 class InvestigatorState(TypedDict):
-    """LangGraph Investigator state with anti-loop hashes and rolling context memory."""
+    """LangGraph Investigator state with anti-loop hashes, rolling context & memory hits."""
 
     messages: Annotated[list[AnyMessage], add_messages]
     symbol: str | None
@@ -71,6 +79,7 @@ class InvestigatorState(TypedDict):
     rolling_summary: str
     compressed_sec_notes: list[str]
     tool_calls_log: list[dict[str, Any]]
+    memory_hits: list[dict[str, Any]]
     forced_stop_reason: str | None
     regime_context: str
 
@@ -121,24 +130,25 @@ def _loopback_httpx_factory(
     )
 
 
-async def load_mcp_tools(settings: Settings) -> list[BaseTool]:
+async def load_mcp_tools(settings: Settings, *, prefer_inprocess: bool = False) -> list[BaseTool]:
     """Load read-only MarketElite tools via FastMCP Streamable HTTP with safe local fallback."""
     mcp_url = f"http://127.0.0.1:{settings.api_port}/mcp-server/mcp"
-    try:
-        client = MultiServerMCPClient(
-            connections={
-                "marketelite": {
-                    "transport": "streamable_http",
-                    "url": mcp_url,
-                    "httpx_client_factory": _loopback_httpx_factory,
+    if not prefer_inprocess:
+        try:
+            client = MultiServerMCPClient(
+                connections={
+                    "marketelite": {
+                        "transport": "streamable_http",
+                        "url": mcp_url,
+                        "httpx_client_factory": _loopback_httpx_factory,
+                    }
                 }
-            }
-        )
-        tools = await asyncio.wait_for(client.get_tools(), timeout=6.0)
-        if tools:
-            return tools
-    except (OSError, TimeoutError, asyncio.TimeoutError, httpx.HTTPError, RuntimeError, ValueError) as exc:
-        logger.info("MCP HTTP transport unavailable (%s); using direct FastMCP registry", exc)
+            )
+            tools = await asyncio.wait_for(client.get_tools(), timeout=6.0)
+            if tools:
+                return tools
+        except (OSError, TimeoutError, asyncio.TimeoutError, httpx.HTTPError, RuntimeError, ValueError) as exc:
+            logger.info("MCP HTTP transport unavailable (%s); using direct FastMCP registry", exc)
 
     # Same underlying read-only FastMCP callables for unit tests or in-process calls
     return [
@@ -161,6 +171,26 @@ async def load_mcp_tools(settings: Settings) -> list[BaseTool]:
             coroutine=get_sec_filings_context,
             name="get_sec_filings_context",
             description="Lazy-load 10-K/10-Q from SEC EDGAR and retrieve cited passages via RAG.",
+        ),
+        StructuredTool.from_function(
+            coroutine=get_account_positions_snapshot,
+            name="get_account_positions_snapshot",
+            description="Read active broker (Trading212/Sandbox/Alpaca) equity, cash, holdings & unrealized P&L.",
+        ),
+        StructuredTool.from_function(
+            coroutine=get_watchlist_matrix,
+            name="get_watchlist_matrix",
+            description="Read user's watched symbols with 1D/5D/YTD returns, RSI14 and RVOL20.",
+        ),
+        StructuredTool.from_function(
+            coroutine=get_watchdog_and_memories,
+            name="get_watchdog_and_memories",
+            description="Read active Watchdog anomaly alerts and historical attribution lessons.",
+        ),
+        StructuredTool.from_function(
+            coroutine=compare_assets_structure,
+            name="compare_assets_structure",
+            description="Compare up to 4 US tickers side-by-side across price trend, RSI, RVOL and GEX.",
         ),
     ]
 
@@ -231,12 +261,14 @@ class InvestigatorAgentRunner:
         tools: Sequence[BaseTool] | None = None,
         pro_llm: Any = None,
         fast_llm: Any = None,
+        broker_config: BrokerConfig | None = None,
     ) -> None:
         self._settings = settings
         self._session_factory = session_factory
         self._injected_tools = list(tools) if tools is not None else None
         self._pro_llm = pro_llm
         self._fast_llm = fast_llm
+        self._broker_cfg = broker_config
 
     def _build_parallel_sec_tool(
         self, notes_collector: list[str]
@@ -276,14 +308,21 @@ class InvestigatorAgentRunner:
             regime_ctx = state.get("regime_context") or await get_market_regime_snapshot()
             msgs = list(state.get("messages", []))
             rolling = state.get("rolling_summary", "")
+            recalled_memories: list[dict[str, Any]] = list(state.get("memory_hits", []))
 
             if "[Historical Episodic Lessons" not in regime_ctx and callable(self._session_factory):
                 try:
                     last_q = str(msgs[-1].content) if msgs else ""
                     retriever = EpisodicMemoryRetriever(self._settings, self._session_factory)
                     memories = await retriever.recall(
-                        last_q, symbol=state.get("symbol"), top_k=2
+                        last_q,
+                        symbol=state.get("symbol"),
+                        top_k=3,
+                        workspace_id=(
+                            self._broker_cfg.workspace_id if self._broker_cfg else "default"
+                        ),
                     )
+                    recalled_memories = memories
                     mem_text = EpisodicMemoryRetriever.format_memories_for_prompt(memories)
                     if mem_text:
                         regime_ctx = f"{regime_ctx}\n\n{mem_text}".strip()
@@ -319,6 +358,7 @@ class InvestigatorAgentRunner:
             return {
                 "regime_context": regime_ctx,
                 "rolling_summary": rolling,
+                "memory_hits": recalled_memories,
                 "messages": msgs,
             }
 
@@ -390,6 +430,7 @@ class InvestigatorAgentRunner:
                             "status": "ok",
                             "latency_ms": latency_ms,
                             "preview": out_str[:180],
+                            "output": out_str[:1200],
                         }
                     )
                 except Exception as exc:  # noqa: BLE001 - intentional MCP tool error self-healing boundary
@@ -479,6 +520,7 @@ class InvestigatorAgentRunner:
         query: str,
         symbol: str | None = None,
         history: Sequence[dict[str, str]] | None = None,
+        initial_regime_context: str = "",
     ) -> AsyncIterator[dict[str, Any]]:
         """Run Investigator graph within wall-clock timeout and yield structured SSE events."""
         pro_llm = self._pro_llm or build_pro_llm(self._settings, streaming=True)
@@ -493,9 +535,17 @@ class InvestigatorAgentRunner:
         base_tools = (
             list(self._injected_tools)
             if self._injected_tools is not None
-            else await load_mcp_tools(self._settings)
+            else await load_mcp_tools(
+                self._settings,
+                prefer_inprocess=self._broker_cfg is not None,
+            )
         )
-        all_tools = [*base_tools, self._build_parallel_sec_tool(notes_collector)]
+        has_parallel_sec = any(t.name == "run_sec_parallel_audit" for t in base_tools)
+        all_tools = (
+            base_tools
+            if has_parallel_sec
+            else [*base_tools, self._build_parallel_sec_tool(notes_collector)]
+        )
 
         graph = self._build_graph(tools=all_tools, pro_llm=pro_llm, fast_llm=fast_llm)
 
@@ -520,21 +570,25 @@ class InvestigatorAgentRunner:
             "rolling_summary": "",
             "compressed_sec_notes": [],
             "tool_calls_log": [],
+            "memory_hits": [],
             "forced_stop_reason": None,
-            "regime_context": "",
+            "regime_context": initial_regime_context,
         }
 
+        broker_token = set_request_broker_context(self._broker_cfg)
         yield {
             "event": "status",
             "data": {
                 "node": "prepare_context",
-                "detail": "Loading Layer-1 Market Regime & FastMCP tools",
+                "stage": 1,
+                "detail": "正在装载宏观 Regime、历史经验记忆与 8 项 MCP 只读工具...",
             },
         }
 
         final_state: dict[str, Any] = dict(init_state)
         deadline = time.monotonic() + float(self._settings.agent_wall_timeout_seconds)
         emitted_log_count = 0
+        synthesizing_notified = False
 
         try:
             stream_iter = graph.astream(
@@ -567,6 +621,16 @@ class InvestigatorAgentRunner:
                         and isinstance(delta, str)
                         and delta
                     ):
+                        if not synthesizing_notified:
+                            synthesizing_notified = True
+                            yield {
+                                "event": "status",
+                                "data": {
+                                    "node": "synthesize",
+                                    "stage": 3,
+                                    "detail": "取证完毕，正在基于实时盘面与文献合成投研结论...",
+                                },
+                            }
                         yield {"event": "token", "data": {"delta": delta}}
                 elif mode == "values" and isinstance(chunk, dict):
                     final_state = chunk
@@ -575,23 +639,32 @@ class InvestigatorAgentRunner:
                         if not isinstance(node_out, dict):
                             continue
                         if node_name == "prepare_context":
+                            mems = node_out.get("memory_hits") or []
+                            if mems:
+                                yield {
+                                    "event": "memory_hit",
+                                    "data": {"memories": mems},
+                                }
                             yield {
                                 "event": "status",
                                 "data": {
                                     "node": "planner",
-                                    "detail": "Regime context injected; planning multi-step lookup",
+                                    "stage": 2,
+                                    "detail": "上下文注入完毕，开始规划并调用只读取证工具...",
                                 },
                             }
                         elif node_name == "tool_executor":
                             all_logs = node_out.get("tool_calls_log", [])
                             for item in all_logs[emitted_log_count:]:
-                                yield {"event": "tool_result", "data": item}
+                                yield {"event": "tool_trace", "data": item}
                             emitted_log_count = len(all_logs)
                         elif node_name == "force_synthesize":
+                            synthesizing_notified = True
                             yield {
                                 "event": "status",
                                 "data": {
                                     "node": "force_synthesize",
+                                    "stage": 3,
                                     "detail": node_out.get("forced_stop_reason", "Synthesizing"),
                                 },
                             }
@@ -601,6 +674,7 @@ class InvestigatorAgentRunner:
                 "event": "status",
                 "data": {
                     "node": "force_synthesize",
+                    "stage": 3,
                     "detail": (
                         f"Wall timeout ({self._settings.agent_wall_timeout_seconds}s) reached; "
                         "synthesizing gracefully"
@@ -623,6 +697,8 @@ class InvestigatorAgentRunner:
             )
             final_state["messages"] = [*final_state.get("messages", messages), fallback]
             final_state["forced_stop_reason"] = "wall_timeout_graceful_fallback"
+        finally:
+            reset_request_broker_context(broker_token)
 
         final_msgs = final_state.get("messages", [])
         answer = ""
@@ -637,6 +713,7 @@ class InvestigatorAgentRunner:
                 "answer": answer,
                 "steps_taken": final_state.get("steps_taken", 0),
                 "tools_used": final_state.get("tool_calls_log", []),
+                "memory_hits": final_state.get("memory_hits", []),
                 "sec_parallel_notes": notes_collector,
                 "forced_stop_reason": final_state.get("forced_stop_reason"),
                 "trade_intent": detect_trade_intent(query, symbol),

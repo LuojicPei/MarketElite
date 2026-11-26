@@ -1,1039 +1,463 @@
 "use client";
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { AnimatePresence, motion } from "framer-motion";
+import { AnimatePresence, LayoutGroup, motion } from "framer-motion";
 import {
   Activity,
-  ArrowUpRight,
-  Bot,
-  CheckCircle2,
+  BookOpen,
   Cpu,
   Database,
-  Eye,
   GitBranch,
-  Layers,
-  Pause,
-  Play,
+  Lock,
   RefreshCw,
-  ServerCrash,
-  ShieldAlert,
-  Terminal,
+  Unlock,
   Zap,
 } from "lucide-react";
+import DataLineageView from "@/components/dataplatform/DataLineageView";
+import DataCatalogQualityView from "@/components/dataplatform/DataCatalogQualityView";
+import RagGovernanceView from "@/components/dataplatform/RagGovernanceView";
+import ProvidersFinOpsView from "@/components/dataplatform/ProvidersFinOpsView";
+import EvalCenterView from "@/components/dataplatform/EvalCenterView";
 import {
-  ArchitectureStage,
-  ComponentHealth,
-  GoldenEvalReport,
-  fetchArchitecture,
-  fetchHealth,
-  fetchLatestEvalReport,
+  DataPlatformOverviewResponse,
+  DataPlatformRagResponse,
+  EvalRunsListResponse,
   HealthResponse,
-  runGoldenEvals,
+  fetchDataPlatformEvalRuns,
+  fetchDataPlatformOverview,
+  fetchDataPlatformRagGovernance,
+  fetchHealth,
+  runDataQualityAudit,
+  verifyDataPlatformAdminToken,
 } from "@/lib/api";
+
+const ADMIN_SESSION_STORAGE_KEY = "me_dataplatform_admin_token";
 
 const EASE_EXPO = [0.16, 1, 0.3, 1] as const;
 
-const FALLBACK_STAGES: ArchitectureStage[] = [
-  {
-    id: "base",
-    order: 1,
-    tag: "确定性底座 · Zero Token",
-    title: "Market Cockpit & Quant Pipeline",
-    subtitle: "宏观流动性 / Estimated GEX / 广度 / 熔断缓存",
-    summary:
-      "通过 ARQ 定时拉取 Alpaca、FRED、CFTC、Binance、Finnhub/FMP，由纯 Python 算子产出净流动性、Call/Put Wall、Zero Gamma、RVOL 与每日 Market Regime 快照写入 Redis 双 TTL 热缓存。",
-    components: [
-      "ARQ Worker",
-      "Redis Circuit Breaker",
-      "PostgreSQL 16 + pgvector",
-      "Lightweight Charts / ECharts",
-    ],
-    phase: "Phase 1–2",
-  },
-  {
-    id: "investigator",
-    order: 2,
-    tag: "Agent 1 · 动态规划主脑",
-    title: "Investigator Agent",
-    subtitle: "LangGraph ReAct + FastMCP + SEC 混合 RAG",
-    summary:
-      "基于大盘 Regime 压缩上下文，动态分支调用 FastMCP (Streamable HTTP) 只读工具；遇到万字 SEC 10-K/10-Q 时触发并行子调研节点隔离长文本并检索 pgvector + BM25 混合索引。",
-    components: [
-      "LangGraph StateGraph",
-      "FastMCP Streamable HTTP",
-      "Deadlock Hash Guard",
-      "Rolling Context Trim",
-    ],
-    phase: "Phase 3",
-  },
-  {
-    id: "critic",
-    order: 3,
-    tag: "Agent 2 · 独立对抗裁判",
-    title: "Risk Critic & HITL Executor",
-    subtitle: "Actor-Critic 隔离审查 + 真实模拟盘下单",
-    summary:
-      "仅在交易意图时条件路由触发。在屏蔽情绪废话的独立上下文中核验逆势风险、财报日历、证伪止损与 1% 风险预算股数；interrupt() 持久化挂起，人工确认后下达 Alpaca Bracket 单。",
-    components: [
-      "AsyncPostgresSaver",
-      "interrupt() HITL",
-      "1% Risk Sizing",
-      "Alpaca Paper Bracket",
-    ],
-    phase: "Phase 4",
-  },
-  {
-    id: "watchdog",
-    order: 4,
-    tag: "Agent 3 · 24h 自治闭环",
-    title: "Watchdog & Reflection Agent",
-    subtitle: "主动异动巡检 + 四象限归因 + 长期记忆",
-    summary:
-      "后台监听盘中放量破位与跌破 Zero Gamma 事件主动调查预警；在模拟单平仓后自动跑 Alpha 归因并沉淀错题记忆至 pgvector，同时运行 Arize Phoenix 黄金评测集闭环。",
-    components: [
-      "Event Watchdog",
-      "T+5/T+20 Alpha Eval",
-      "Episodic pgvector Memory",
-      "Arize Phoenix Trace",
-    ],
-    phase: "Phase 5",
-  },
-];
-
-const STAGE_MOCK_FLOW: Record<
-  string,
-  { trigger: string; guardrails: string[]; output: string }
-> = {
-  base: {
-    trigger: "ARQ Cron (08:30 ET) 聚合 FRED + Alpaca 期权链",
-    guardrails: ["Soft/Hard 双 TTL 缓存", "连续 5 次 429 自动熔断 60s", "0 LLM Token 数学计算"],
-    output: "Regime: 谨慎防守 | SPY Zero Gamma: 584.2 | HY OAS: 3.12% (+9bp)",
-  },
-  investigator: {
-    trigger: "用户提问: 「NVDA 今天跌了 5%，能抄底吗？」",
-    guardrails: ["Tool 指纹防死循环", "SEC 10-K 子图隔离压缩", "45s 超时优雅降级"],
-    output: "动态查明 SOXX 仅跌 0.8%，NVDA 属放量破位 (RVOL 2.4) 且 4 天后发财报，暂不盲目接刀。",
-  },
-  critic: {
-    trigger: "条件路由激活: 检测到「计划买入 200 股」高风险意图",
-    guardrails: ["隔离情感对话上下文", "1% 最大回撤反推股数", "HITL interrupt() 落盘挂起"],
-    output: "驳回 200 股冲动仓位 -> 建议减至 45 股，硬止损设 Put Wall 下方，等待人工卡片确认。",
-  },
-  watchdog: {
-    trigger: "事件驱动: Alpaca Bracket 止盈/止损单触发平仓",
-    guardrails: ["T+5 / T+20 客观市场验证", "对比 SPY 剥离 Beta/Alpha", "错题写入 pgvector 长期记忆"],
-    output: "归因结论: 严格按止损执行（好过程），跑赢同期 SPY +1.8%，预警准确率已同步 Arize Phoenix。",
-  },
-};
-
-function handleSpotlightMove(e: React.MouseEvent<HTMLElement>) {
-  const rect = e.currentTarget.getBoundingClientRect();
-  e.currentTarget.style.setProperty("--mx", `${e.clientX - rect.left}px`);
-  e.currentTarget.style.setProperty("--my", `${e.clientY - rect.top}px`);
-}
-
-function StatusDot({
-  status,
-}: {
-  status: "up" | "down" | "disabled" | "standby";
-}) {
-  const styles = {
-    up: "bg-emerald-500",
-    down: "bg-rose-500",
-    disabled: "bg-zinc-400",
-    standby: "bg-amber-500",
-  }[status];
-
-  return (
-    <span className="relative flex h-2.5 w-2.5 items-center justify-center">
-      <span
-        className={`relative inline-flex h-2 w-2 rounded-full ${styles} ${
-          status === "up" ? "pulse-ring" : ""
-        }`}
-      />
-    </span>
-  );
-}
-
-function InfraBlock({
-  title,
-  subtitle,
-  icon: Icon,
-  health,
-  variant,
-  delay,
-}: {
-  title: string;
-  subtitle: string;
-  icon: React.ElementType;
-  health?: ComponentHealth;
-  variant: "black" | "white";
-  delay: number;
-}) {
-  const isDark = variant === "black";
-  const status = health?.status ?? "down";
-  const badgeText =
-    status === "up" ? "ONLINE" : status === "disabled" ? "DISABLED" : "OFFLINE";
-
-  const statusTextColor =
-    status === "up"
-      ? isDark
-        ? "text-emerald-400"
-        : "text-emerald-700"
-      : status === "disabled"
-      ? "text-zinc-400"
-      : isDark
-      ? "text-rose-400"
-      : "text-rose-600";
-
-  return (
-    <motion.div
-      initial={{ opacity: 0, y: 12 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.45, delay, ease: EASE_EXPO }}
-      whileHover={{ y: -4, scale: 1.008 }}
-      onMouseMove={handleSpotlightMove}
-      className={`${
-        isDark
-          ? "velvet-black-block text-zinc-100"
-          : "velvet-white-block text-zinc-900 dark:text-zinc-100"
-      } rounded-2xl p-5 flex flex-col justify-between transition-shadow duration-300`}
-    >
-      <div className="flex items-start justify-between gap-3">
-        <div className="flex items-center gap-3">
-          <div
-            className={`flex h-9 w-9 items-center justify-center rounded-xl border ${
-              isDark
-                ? "border-white/15 bg-white/[0.06] text-white"
-                : "border-zinc-200/80 bg-zinc-50/80 text-zinc-900 dark:border-white/15 dark:bg-white/[0.06] dark:text-white"
-            }`}
-          >
-            <Icon className="h-4 w-4" />
-          </div>
-          <div>
-            <h3
-              className={`text-sm font-semibold tracking-tight ${
-                isDark ? "text-white" : "text-zinc-950 dark:text-white"
-              }`}
-            >
-              {title}
-            </h3>
-            <p className={`text-xs ${isDark ? "text-zinc-400" : "text-zinc-500 dark:text-zinc-400"}`}>
-              {subtitle}
-            </p>
-          </div>
-        </div>
-
-        <span
-          className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 font-mono text-[11px] font-medium ${
-            isDark
-              ? "border-white/15 bg-white/[0.05]"
-              : "border-zinc-200/80 bg-white/70 dark:border-white/15 dark:bg-white/[0.05]"
-          } ${statusTextColor}`}
-        >
-          <StatusDot status={status} />
-          {badgeText}
-        </span>
-      </div>
-
-      <div
-        className={`mt-5 flex items-center justify-between border-t pt-3 text-xs ${
-          isDark ? "border-white/10" : "border-zinc-200/80 dark:border-white/10"
-        }`}
-      >
-        <span
-          className={`truncate font-mono ${isDark ? "text-zinc-400" : "text-zinc-500 dark:text-zinc-400"}`}
-          title={health?.detail}
-        >
-          {health?.detail || "Awaiting backend probe..."}
-        </span>
-        <span
-          className={`ml-2 shrink-0 font-mono font-medium tabular-nums ${
-            isDark ? "text-white" : "text-zinc-950 dark:text-white"
-          }`}
-        >
-          {health ? `${health.latency_ms.toFixed(1)} ms` : "-- ms"}
-        </span>
-      </div>
-
-      {health?.ui_url && status === "up" && (
-        <a
-          href={health.ui_url}
-          target="_blank"
-          rel="noreferrer"
-          className={`mt-2.5 inline-flex items-center gap-1 text-xs font-medium transition-opacity hover:opacity-75 ${
-            isDark ? "text-white" : "text-zinc-950 dark:text-white"
-          }`}
-        >
-          打开 Phoenix Trace 面板
-          <ArrowUpRight className="h-3.5 w-3.5" />
-        </a>
-      )}
-    </motion.div>
-  );
-}
+type PlatformTabId = "lineage" | "catalog" | "rag" | "evals" | "finops";
 
 export default function StatusConsole() {
-  const [activeTab, setActiveTab] = useState<"telemetry" | "evals" | "choreography">("telemetry");
+  const [activeTab, setActiveTab] = useState<PlatformTabId>("lineage");
   const [health, setHealth] = useState<HealthResponse | null>(null);
-  const [stages, setStages] = useState<ArchitectureStage[]>(FALLBACK_STAGES);
+  const [overview, setOverview] = useState<DataPlatformOverviewResponse | null>(null);
+  const [ragData, setRagData] = useState<DataPlatformRagResponse | null>(null);
+  const [evalRunsData, setEvalRunsData] = useState<EvalRunsListResponse | null>(null);
+
   const [loading, setLoading] = useState<boolean>(true);
+  const [runningQuality, setRunningQuality] = useState<boolean>(false);
   const [apiError, setApiError] = useState<string | null>(null);
   const [roundTripMs, setRoundTripMs] = useState<number | null>(null);
 
-  const [evalReport, setEvalReport] = useState<GoldenEvalReport | null>(null);
-  const [runningEvals, setRunningEvals] = useState<boolean>(false);
-  const [evalCategoryFilter, setEvalCategoryFilter] = useState<string>("all");
+  // Positioning A: Public Read-Only Showcase + Admin Token Unlock
+  const [adminToken, setAdminToken] = useState<string>("");
+  const [tokenInput, setTokenInput] = useState<string>("");
+  const [adminUnlocked, setAdminUnlocked] = useState<boolean>(false);
+  const [showcasePreview, setShowcasePreview] = useState<boolean>(true);
+  const [showUnlockBox, setShowUnlockBox] = useState<boolean>(false);
+  const [verifyingToken, setVerifyingToken] = useState<boolean>(false);
+  const [unlockFeedback, setUnlockFeedback] = useState<string | null>(null);
 
-  const [selectedStageId, setSelectedStageId] = useState<string>("base");
-  const [autoPlay, setAutoPlay] = useState<boolean>(false);
+  const requiresAdmin = Boolean(overview?.access_mode?.requires_admin_token);
+  const isReadOnly = requiresAdmin ? !adminUnlocked : showcasePreview;
 
-  const probeSystem = useCallback(async () => {
+  useEffect(() => {
+    try {
+      const saved = window.sessionStorage.getItem(ADMIN_SESSION_STORAGE_KEY);
+      if (saved && saved.trim()) {
+        setTokenInput(saved);
+        void verifyDataPlatformAdminToken(saved)
+          .then(() => {
+            setAdminToken(saved);
+            setAdminUnlocked(true);
+            setShowcasePreview(false);
+          })
+          .catch(() => {
+            window.sessionStorage.removeItem(ADMIN_SESSION_STORAGE_KEY);
+          });
+      }
+    } catch {
+      // sessionStorage unavailable in restricted contexts
+    }
+  }, []);
+
+  const loadAllPlatformState = useCallback(async () => {
     setLoading(true);
     setApiError(null);
     const t0 = performance.now();
     try {
-      const [h, arch, ev] = await Promise.all([
-        fetchHealth(),
-        fetchArchitecture(),
-        fetchLatestEvalReport().catch(() => null),
+      const [h, ov, rag, evRuns] = await Promise.all([
+        fetchHealth().catch(() => null),
+        fetchDataPlatformOverview(),
+        fetchDataPlatformRagGovernance().catch(() => null),
+        fetchDataPlatformEvalRuns(15).catch(() => null),
       ]);
-      setHealth(h);
-      if (arch?.stages?.length) {
-        setStages(arch.stages);
-      }
-      if (ev) {
-        setEvalReport(ev);
-      }
+      if (h) setHealth(h);
+      setOverview(ov);
+      if (rag) setRagData(rag);
+      if (evRuns) setEvalRunsData(evRuns);
       setRoundTripMs(Math.round(performance.now() - t0));
     } catch (err) {
-      setApiError(err instanceof Error ? err.message : "Backend API unreachable");
-      setHealth(null);
-      setRoundTripMs(null);
+      setApiError(err instanceof Error ? err.message : "无法读取数据与评测中台状态");
     } finally {
       setLoading(false);
     }
   }, []);
 
-  const handleRunGoldenEvals = async () => {
-    setRunningEvals(true);
+  useEffect(() => {
+    void loadAllPlatformState();
+  }, [loadAllPlatformState]);
+
+  const handleRerunQuality = async () => {
+    if (isReadOnly) return;
+    setRunningQuality(true);
     try {
-      const rep = await runGoldenEvals();
-      setEvalReport(rep);
+      const nextDq = await runDataQualityAudit(adminToken);
+      setOverview((prev) => (prev ? { ...prev, quality: nextDq } : prev));
     } catch (err) {
-      setApiError(err instanceof Error ? err.message : "Golden eval run failed");
+      setApiError(err instanceof Error ? err.message : "数据质量稽核运行失败");
     } finally {
-      setRunningEvals(false);
+      setRunningQuality(false);
     }
   };
 
-  useEffect(() => {
-    probeSystem();
-  }, [probeSystem]);
+  const handleToggleLockOrUnlock = async () => {
+    setUnlockFeedback(null);
+    if (!isReadOnly) {
+      // Return cleanly to Public Visitor Read-Only view
+      setAdminUnlocked(false);
+      setAdminToken("");
+      setShowcasePreview(true);
+      setShowUnlockBox(false);
+      try {
+        window.sessionStorage.removeItem(ADMIN_SESSION_STORAGE_KEY);
+      } catch {
+        // ignore storage errors
+      }
+      return;
+    }
 
-  useEffect(() => {
-    if (!autoPlay || activeTab !== "choreography") return;
-    const timer = setInterval(() => {
-      setSelectedStageId((prev) => {
-        const idx = stages.findIndex((s) => s.id === prev);
-        return stages[(idx + 1) % stages.length].id;
-      });
-    }, 2800);
-    return () => clearInterval(timer);
-  }, [autoPlay, activeTab, stages]);
+    if (!requiresAdmin) {
+      // Local dev without ADMIN_API_TOKEN: 1-click toggle between Showcase Preview & Dev Mode
+      setShowcasePreview(false);
+      setAdminUnlocked(true);
+      setShowUnlockBox(false);
+      return;
+    }
 
-  const readinessStats = useMemo(() => {
-    const items = health?.integrations ?? [];
-    if (!items.length) return { ready: 0, total: 9, pct: 0 };
-    const ready = items.filter((i) => i.configured).length;
-    return { ready, total: items.length, pct: Math.round((ready / items.length) * 100) };
-  }, [health]);
+    // Production / ADMIN_API_TOKEN guarded: prompt for passphrase
+    setShowUnlockBox((prev) => !prev);
+  };
 
-  const activeStage = useMemo(
-    () => stages.find((s) => s.id === selectedStageId) ?? stages[0],
-    [stages, selectedStageId]
-  );
+  const handleVerifyAdminSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setVerifyingToken(true);
+    setUnlockFeedback(null);
+    try {
+      await verifyDataPlatformAdminToken(tokenInput);
+      const clean = tokenInput.trim();
+      setAdminToken(clean);
+      setAdminUnlocked(true);
+      setShowcasePreview(false);
+      setShowUnlockBox(false);
+      try {
+        if (clean) {
+          window.sessionStorage.setItem(ADMIN_SESSION_STORAGE_KEY, clean);
+        }
+      } catch {
+        // ignore storage errors
+      }
+    } catch (err) {
+      setUnlockFeedback(err instanceof Error ? err.message : "口令校验失败（403）");
+    } finally {
+      setVerifyingToken(false);
+    }
+  };
 
-  const overallStatus = useMemo(() => {
-    if (apiError || !health) return { label: "API STANDBY", tone: "standby" as const };
-    if (health.status === "ok") return { label: "CORE ONLINE", tone: "up" as const };
-    if (health.status === "degraded") return { label: "DEGRADED", tone: "standby" as const };
-    return { label: "INITIALIZING", tone: "down" as const };
+  const statusPill = useMemo(() => {
+    if (apiError || !health) return { label: "API STANDBY", dot: "bg-amber-500" };
+    if (health.status === "ok") return { label: "DATA PLATFORM ONLINE", dot: "bg-emerald-500" };
+    if (health.status === "degraded") return { label: "PARTIAL DEGRADED", dot: "bg-amber-500" };
+    return { label: "INITIALIZING", dot: "bg-rose-500" };
   }, [apiError, health]);
 
+  const navTabs: Array<{ id: PlatformTabId; label: string; icon: React.ElementType }> = [
+    { id: "lineage", label: "数据血缘与总览", icon: GitBranch },
+    { id: "catalog", label: "资产目录与质量", icon: Database },
+    { id: "rag", label: "RAG 语料与记忆", icon: BookOpen },
+    { id: "evals", label: "全栈评测 (4-Track)", icon: Zap },
+    { id: "finops", label: "熔断监控与 FinOps", icon: Cpu },
+  ];
+
   return (
-    <div className="mx-auto flex w-full max-w-[1780px] flex-col px-4 pt-5 sm:px-6 lg:px-8">
-      {/* Compact Sub-Toolbar (no double sticky navbar!) */}
-      <div className="mb-5 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-zinc-200/80 bg-white/75 px-4 py-2.5 backdrop-blur-xl dark:border-white/15 dark:bg-white/[0.05]">
-        <div className="flex items-center gap-2.5">
-          <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-zinc-950 text-white dark:bg-white dark:text-zinc-950">
-            <Activity className="h-3.5 w-3.5" />
+    <div className="mx-auto flex w-full max-w-[1780px] flex-col px-4 pt-6 pb-12 sm:px-6 lg:px-8">
+      {/* Authoritative Hero Header */}
+      <div className="mb-5 flex flex-col justify-between gap-4 px-1 lg:flex-row lg:items-center">
+        <div className="flex items-start gap-3.5 sm:items-center sm:gap-4">
+          <div className="apple-liquid-glass flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl text-zinc-950 dark:text-white sm:h-14 sm:w-14">
+            <Activity className="relative z-10 h-6 w-6 text-emerald-500 sm:h-7 sm:w-7" />
           </div>
-          <span className="font-mono text-xs font-semibold tracking-wider text-zinc-900 dark:text-zinc-100">
-            {health?.phase || "Phase 5 · Infra & Golden Benchmark"}
-          </span>
-        </div>
-
-        {/* Monochrome Sliding Segmented Switch */}
-        <div className="flex items-center rounded-full border border-zinc-200/80 bg-white/80 p-1 shadow-sm backdrop-blur-md dark:border-white/10 dark:bg-white/[0.05]">
-          {(
-            [
-              { id: "telemetry", label: "系统健康探针", icon: Cpu },
-              { id: "evals", label: "Phase 5 黄金评测", icon: CheckCircle2 },
-              { id: "choreography", label: "Agent 闭环预览", icon: GitBranch },
-            ] as const
-          ).map((tab) => {
-            const Icon = tab.icon;
-            const isActive = activeTab === tab.id;
-            return (
-              <button
-                key={tab.id}
-                type="button"
-                onClick={() => setActiveTab(tab.id)}
-                className={`relative flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-xs font-medium transition-colors ${
-                  isActive
-                    ? "text-white dark:text-zinc-950"
-                    : "text-zinc-500 hover:text-zinc-950 dark:text-zinc-400 dark:hover:text-white"
-                }`}
-              >
-                {isActive && (
-                  <motion.span
-                    layoutId="active-nav-pill"
-                    transition={{ type: "spring", stiffness: 420, damping: 32 }}
-                    className="absolute inset-0 rounded-full bg-obsidian-950 dark:bg-white"
-                  />
-                )}
-                <Icon className="relative z-10 h-3.5 w-3.5" />
-                <span className="relative z-10">{tab.label}</span>
-              </button>
-            );
-          })}
-        </div>
-
-        {/* Status & Re-probe Trigger */}
-        <div className="flex items-center gap-2.5">
-          <div className="flex items-center gap-2 rounded-full border border-zinc-200/80 bg-white/80 px-3 py-1.5 font-mono text-xs shadow-sm dark:border-white/10 dark:bg-white/[0.05]">
-            <StatusDot status={overallStatus.tone} />
-            <span className="font-medium text-zinc-900 dark:text-zinc-100">{overallStatus.label}</span>
-            {roundTripMs !== null && (
-              <span className="border-l border-zinc-200 pl-2 tabular-nums text-zinc-500 dark:border-white/10 dark:text-zinc-400">
-                {roundTripMs} ms
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2.5">
+              <span className="font-mono text-[11px] font-semibold uppercase tracking-[0.2em] text-zinc-500 dark:text-zinc-400">
+                DATAOPS OBSERVABILITY · HYBRID RAG GOVERNANCE · MULTI-TRACK EVALS
               </span>
-            )}
+              <span className="apple-liquid-glass inline-flex items-center gap-1.5 rounded-full px-3 py-0.5 font-mono text-[11px] font-semibold text-zinc-900 dark:text-zinc-100">
+                <span className={`relative z-10 h-2 w-2 rounded-full ${statusPill.dot}`} />
+                <span className="relative z-10">{statusPill.label}</span>
+              </span>
+            </div>
+            <h1 className="mt-1 font-serif text-2xl font-bold tracking-tight text-zinc-950 dark:text-white sm:text-3xl lg:text-4xl">
+              MarketElite 数据与评测中台
+            </h1>
           </div>
+        </div>
 
+        {/* Probe Latency + Showcase Lock/Unlock + Liquid Glass Reload */}
+        <div className="flex flex-wrap items-center gap-2.5 self-start lg:self-center">
           <button
             type="button"
-            onClick={probeSystem}
-            disabled={loading}
-            className="inline-flex items-center gap-1.5 rounded-full bg-obsidian-950 px-4 py-1.5 text-xs font-medium text-white shadow-sm transition-all hover:bg-zinc-800 active:scale-[0.98] disabled:opacity-50 dark:bg-white dark:text-zinc-950 dark:hover:bg-zinc-200"
+            onClick={() => void handleToggleLockOrUnlock()}
+            title={
+              isReadOnly
+                ? requiresAdmin
+                  ? "当前为公网只读展示模式，输入管理员口令可解锁跑批与基线修改"
+                  : "当前正模拟公网访客只读视图，点击可一键解锁本地管理操作"
+                : "点击切回公网访客只读视角"
+            }
+            className={`apple-liquid-glass-btn inline-flex items-center gap-1.5 whitespace-nowrap rounded-full px-3.5 py-2 font-mono text-xs font-semibold transition ${
+              isReadOnly
+                ? "text-amber-700 dark:text-amber-300"
+                : "text-emerald-700 dark:text-emerald-300"
+            }`}
           >
-            <RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
-            刷新探针
+            {isReadOnly ? (
+              <Lock className="relative z-10 h-3.5 w-3.5" />
+            ) : (
+              <Unlock className="relative z-10 h-3.5 w-3.5" />
+            )}
+            <span className="relative z-10">
+              {isReadOnly
+                ? requiresAdmin
+                  ? "访客只读 · 解锁管理"
+                  : "访客只读预览 · 解锁调试"
+                : "管理员已解锁 · 锁定只读"}
+            </span>
+          </button>
+
+          {roundTripMs !== null && (
+            <span className="font-mono text-xs font-medium tabular-nums text-zinc-500 dark:text-zinc-400">
+              {roundTripMs} ms
+            </span>
+          )}
+          <button
+            type="button"
+            disabled={loading}
+            onClick={() => void loadAllPlatformState()}
+            className="apple-liquid-glass-btn inline-flex items-center gap-2 whitespace-nowrap rounded-full px-4 py-2 font-sans text-sm font-semibold text-zinc-950 disabled:opacity-50 dark:text-white"
+          >
+            <RefreshCw className={`relative z-10 h-4 w-4 ${loading ? "animate-spin" : ""}`} />
+            <span className="relative z-10">全量采样刷新</span>
           </button>
         </div>
       </div>
 
-      {/* Main Gallery Stage */}
-      <main className="w-full flex-1 pb-6">
-        <AnimatePresence mode="wait">
-          {activeTab === "telemetry" ? (
-            <motion.div
-              key="telemetry"
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -8 }}
-              transition={{ duration: 0.28, ease: EASE_EXPO }}
-              className="space-y-5"
+      {/* Inline Admin Passphrase Bar (when requiresAdmin and user clicks unlock) */}
+      {showUnlockBox && isReadOnly && (
+        <form
+          onSubmit={handleVerifyAdminSubmit}
+          className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-amber-500/30 bg-amber-500/[0.07] px-4 py-2.5"
+        >
+          <div className="font-sans text-xs text-amber-950 dark:text-amber-200">
+            <b>管理员口令解锁：</b>
+            {overview?.access_mode?.admin_configured === false
+              ? "服务端处于 Public Showcase 锁定但未配置 ADMIN_API_TOKEN，当前接口保持只读。"
+              : "输入 `.env` 中的 ADMIN_API_TOKEN 后，将暂存当前标签页会话并解锁跑批/同步/改基线操作。"}
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <input
+              type="password"
+              value={tokenInput}
+              onChange={(e) => setTokenInput(e.target.value)}
+              placeholder="输入 X-Admin-Token..."
+              aria-label="X-Admin-Token"
+              className="h-8 w-52 rounded-full border border-zinc-300 bg-white px-3 font-mono text-xs text-zinc-900 outline-none dark:border-white/20 dark:bg-zinc-900 dark:text-white"
+            />
+            <button
+              type="submit"
+              disabled={verifyingToken}
+              className="h-8 rounded-full bg-zinc-950 px-3.5 font-mono text-xs font-semibold text-white hover:bg-zinc-800 disabled:opacity-50 dark:bg-white dark:text-zinc-950"
             >
-              {/* Standby Banner if FastAPI isn't started yet */}
-              {apiError && (
-                <motion.div
-                  initial={{ opacity: 0, scale: 0.99 }}
-                  animate={{ opacity: 1, scale: 1 }}
-                  className="velvet-white-block flex flex-col justify-between gap-4 rounded-2xl border-amber-300/70 p-4 sm:flex-row sm:items-center"
-                >
-                  <div className="flex items-start gap-3">
-                    <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-amber-50 text-amber-700 border border-amber-200">
-                      <ServerCrash className="h-4 w-4" />
-                    </div>
-                    <div>
-                      <h2 className="text-sm font-semibold text-zinc-950">
-                        后端 FastAPI 探针暂未连接 ({apiError})
-                      </h2>
-                      <p className="mt-0.5 text-xs text-zinc-500">
-                        请启动本地后端服务，页面即可实时采集 PostgreSQL / Redis / Phoenix 与密钥就绪状态。
-                      </p>
-                    </div>
-                  </div>
-                  <div className="shrink-0 rounded-xl bg-obsidian-950 px-3.5 py-2 font-mono text-xs text-zinc-100">
-                    cd backend &amp;&amp; .\.venv\Scripts\python.exe run.py
-                  </div>
-                </motion.div>
-              )}
-
-              {/* Hero Block: Deep Obsidian Velvet Black Anchor */}
-              <div
-                onMouseMove={handleSpotlightMove}
-                className="velvet-black-block rounded-2xl p-6 text-zinc-100"
-              >
-                <div className="flex flex-col justify-between gap-5 md:flex-row md:items-center">
-                  <div className="space-y-1.5">
-                    <div className="font-mono text-[11px] uppercase tracking-widest text-zinc-400">
-                      SYSTEM READINESS // LIGHT SILK × MONOCHROME
-                    </div>
-                    <h1 className="font-serif text-3xl tracking-tight text-white">
-                      工程基础设施实时遥测台
-                    </h1>
-                    <p className="max-w-2xl text-xs leading-relaxed text-zinc-400">
-                      前端已采用「白底丝绒 × 黑白相间组件」视觉基线；PostgreSQL (pgvector)、Redis 缓存锁及 Arize Phoenix 可观测探针均已就绪，敏感密钥严格保留在服务端脱敏校验。
-                    </p>
-                  </div>
-
-                  {/* Nested Crisp White Metric Inset inside Black Hero */}
-                  <div className="w-full shrink-0 rounded-xl bg-white p-4 text-zinc-900 shadow-sm md:w-72">
-                    <div className="flex items-center justify-between text-xs">
-                      <span className="font-medium text-zinc-600">数据源与 LLM 就绪度</span>
-                      <span className="font-mono font-bold tabular-nums text-zinc-950">
-                        {readinessStats.ready} / {readinessStats.total}
-                      </span>
-                    </div>
-                    <div className="mt-2.5 h-2 w-full overflow-hidden rounded-full bg-zinc-200">
-                      <motion.div
-                        initial={{ width: 0 }}
-                        animate={{ width: `${readinessStats.pct}%` }}
-                        transition={{ duration: 0.7, ease: EASE_EXPO }}
-                        className="h-full rounded-full bg-obsidian-950"
-                      />
-                    </div>
-                    <div className="mt-2.5 flex items-center justify-between font-mono text-[11px] text-zinc-500">
-                      <span>{health?.env?.toUpperCase() || "LOCAL"}</span>
-                      <span className="tabular-nums">
-                        {health?.checked_at
-                          ? new Date(health.checked_at).toLocaleTimeString()
-                          : "--:--:--"}
-                      </span>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              {/* Alternating White / Black / White Infrastructure Row */}
-              <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-                <InfraBlock
-                  title="PostgreSQL 16 + pgvector"
-                  subtitle="业务账本 / Checkpoint / SEC 混合 RAG"
-                  icon={Database}
-                  health={health?.components.postgres}
-                  variant="white"
-                  delay={0.05}
-                />
-                <InfraBlock
-                  title="Redis 7 Store"
-                  subtitle="驾驶舱热缓存 / 熔断器 / 防重入锁"
-                  icon={Zap}
-                  health={health?.components.redis}
-                  variant="black"
-                  delay={0.12}
-                />
-                <InfraBlock
-                  title="Arize Phoenix"
-                  subtitle="单容器 OpenTelemetry Trace & Eval"
-                  icon={Eye}
-                  health={health?.components.phoenix}
-                  variant="white"
-                  delay={0.19}
-                />
-              </div>
-
-              {/* Clean Gallery White Matrix */}
-              <div
-                onMouseMove={handleSpotlightMove}
-                className="velvet-white-block rounded-2xl p-5"
-              >
-                <div className="mb-4 flex flex-wrap items-center justify-between gap-2 border-b border-zinc-200/80 pb-3 dark:border-white/10">
-                  <div>
-                    <h2 className="text-sm font-semibold text-zinc-950 dark:text-white">
-                      美股数据源与大模型网关接入矩阵
-                    </h2>
-                    <p className="text-xs text-zinc-500 dark:text-zinc-400">
-                      免账号官方源开箱即用；其余在根目录{" "}
-                      <code className="rounded bg-zinc-100 px-1.5 py-0.5 font-mono text-zinc-800 dark:bg-white/10 dark:text-zinc-100">
-                        .env
-                      </code>{" "}
-                      填入免费 Key 即可自动点亮。
-                    </p>
-                  </div>
-                  <div className="inline-flex items-center gap-1.5 rounded-full bg-obsidian-950 px-3 py-1 font-mono text-[11px] text-white dark:bg-white dark:text-zinc-950">
-                    <Terminal className="h-3 w-3" />
-                    python -m scripts.check_keys
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                  {(
-                    health?.integrations ?? [
-                      {
-                        id: "alpaca",
-                        name: "Alpaca Market & Paper Trading",
-                        category: "market_data",
-                        requires_key: true,
-                        configured: false,
-                        mode: "Paper",
-                      },
-                      {
-                        id: "fred",
-                        name: "FRED Macro & Liquidity",
-                        category: "macro",
-                        requires_key: true,
-                        configured: false,
-                        mode: "API Key",
-                      },
-                      {
-                        id: "finnhub",
-                        name: "Finnhub Earnings & EPS",
-                        category: "fundamentals",
-                        requires_key: true,
-                        configured: false,
-                        mode: "Free Tier",
-                      },
-                      {
-                        id: "fmp",
-                        name: "FMP Economic Calendar",
-                        category: "macro",
-                        requires_key: true,
-                        configured: false,
-                        mode: "Free Tier",
-                      },
-                      {
-                        id: "binance",
-                        name: "Binance Vision (BTCUSDT)",
-                        category: "crypto",
-                        requires_key: false,
-                        configured: true,
-                        mode: "Keyless Public",
-                      },
-                      {
-                        id: "cftc",
-                        name: "CFTC COT Socrata JSON",
-                        category: "positioning",
-                        requires_key: false,
-                        configured: true,
-                        mode: "Keyless Public",
-                      },
-                      {
-                        id: "sec_edgar",
-                        name: "SEC EDGAR (10-K / 10-Q / 8-K)",
-                        category: "rag",
-                        requires_key: false,
-                        configured: false,
-                        mode: "Header Policy",
-                      },
-                      {
-                        id: "llm_fast",
-                        name: "LLM Fast Tier",
-                        category: "llm",
-                        requires_key: true,
-                        configured: false,
-                        mode: "OpenAI-Compat",
-                      },
-                      {
-                        id: "llm_pro",
-                        name: "LLM Reasoning Tier",
-                        category: "llm",
-                        requires_key: true,
-                        configured: false,
-                        mode: "OpenAI-Compat",
-                      },
-                    ]
-                  ).map((item, idx) => (
-                    <motion.div
-                      key={item.id}
-                      initial={{ opacity: 0, y: 8 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      whileHover={{ y: -2, scale: 1.01 }}
-                      transition={{ duration: 0.25, delay: 0.02 * idx, ease: EASE_EXPO }}
-                      className="flex items-center justify-between gap-3 rounded-xl border border-zinc-200/80 bg-white/60 px-3.5 py-3 backdrop-blur-md transition-colors hover:border-zinc-400 dark:border-white/10 dark:bg-white/[0.04] dark:hover:border-white/25"
-                    >
-                      <div className="min-w-0">
-                        <div className="truncate text-xs font-semibold text-zinc-900 dark:text-white">
-                          {item.name}
-                        </div>
-                        <div className="mt-1 flex items-center gap-1.5 font-mono text-[11px] text-zinc-500 dark:text-zinc-400">
-                          <span>{item.mode}</span>
-                          <span>·</span>
-                          <span>{item.requires_key ? "API Key" : "Zero-Key"}</span>
-                        </div>
-                      </div>
-                      {item.configured ? (
-                        <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-obsidian-950 px-2.5 py-0.5 font-mono text-[11px] text-emerald-400 dark:bg-emerald-500/20 dark:text-emerald-300">
-                          <CheckCircle2 className="h-3 w-3" />
-                          READY
-                        </span>
-                      ) : (
-                        <span className="inline-flex shrink-0 items-center rounded-full border border-zinc-300 bg-white px-2.5 py-0.5 font-mono text-[11px] text-amber-700 dark:border-amber-500/30 dark:bg-amber-950/40 dark:text-amber-300">
-                          PENDING
-                        </span>
-                      )}
-                    </motion.div>
-                  ))}
-                </div>
-              </div>
-            </motion.div>
-          ) : activeTab === "evals" ? (
-            <motion.div
-              key="evals"
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -8 }}
-              transition={{ duration: 0.28, ease: EASE_EXPO }}
-              className="space-y-5"
+              {verifyingToken ? "校验中..." : "验证解锁"}
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowUnlockBox(false)}
+              className="h-8 rounded-full px-2.5 font-mono text-xs text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-white"
             >
-              <div
-                onMouseMove={handleSpotlightMove}
-                className="velvet-black-block flex flex-col justify-between gap-4 rounded-2xl p-6 text-white sm:flex-row sm:items-center"
-              >
-                <div>
-                  <div className="font-mono text-xs uppercase tracking-widest text-zinc-200">
-                    PHASE 5 GOLDEN BENCHMARK · 32 DETERMINISTIC &amp; POLICY CASES
-                  </div>
-                  <h1 className="mt-1 font-serif text-3xl tracking-tight text-white">
-                    量化算子、风控护栏与归因记忆回归评测矩阵
-                  </h1>
-                  <p className="mt-1 text-sm text-zinc-200">
-                    离线零 Token 秒级验证宏观体制、GEX 做市商算法、1% 预算钳位、Bracket 止损防错与 RRF 混合检索。
-                  </p>
-                </div>
+              取消
+            </button>
+          </div>
+          {unlockFeedback && (
+            <div className="w-full font-mono text-[11px] font-semibold text-rose-700 dark:text-rose-300">
+              {unlockFeedback}
+            </div>
+          )}
+        </form>
+      )}
 
-                <div className="flex items-center gap-3">
-                  {evalReport && (
-                    <div className="rounded-xl bg-white px-4 py-2 text-right text-zinc-950">
-                      <div className="font-mono text-xs font-medium text-zinc-700">通过率 PASS RATE</div>
-                      <div className="font-mono text-xl font-bold tabular-nums">
-                        {evalReport.passed_cases}/{evalReport.total_cases} ({evalReport.pass_rate_pct}%)
-                      </div>
-                    </div>
-                  )}
-                  <button
-                    type="button"
-                    disabled={runningEvals}
-                    onClick={handleRunGoldenEvals}
-                    className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-emerald-400 px-4 py-2 font-mono text-xs font-semibold text-zinc-950 transition hover:bg-emerald-300 disabled:opacity-50"
-                  >
-                    <Zap className="h-3.5 w-3.5" />
-                    {runningEvals ? "评测运行中..." : "立即运行 Golden Evals"}
-                  </button>
-                </div>
-              </div>
+      {/* Subtle Positioning A Public Read-Only Notice */}
+      {isReadOnly && (
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-zinc-200/80 bg-white/60 px-4 py-2 font-sans text-xs text-zinc-700 backdrop-blur-md dark:border-white/10 dark:bg-white/[0.03] dark:text-zinc-300">
+          <div className="flex items-center gap-2">
+            <Lock className="h-3.5 w-3.5 shrink-0 text-amber-500" />
+            <span>
+              当前为 <b>公开只读展示模式</b>：访客可自由浏览 4 层数仓血缘、PG/Redis 实时指标与全部 54 项全栈评测证据；触发跑批、在线 RAG 调试与写库操作需管理员口令解锁。
+            </span>
+          </div>
+          <span className="font-mono text-[10.5px] text-zinc-500 dark:text-zinc-400">
+            READ-ONLY SHOWCASE GUARD
+          </span>
+        </div>
+      )}
 
-              {evalReport ? (
-                <>
-                  <div className="grid grid-cols-2 gap-3.5 md:grid-cols-4">
-                    {Object.entries(evalReport.categories).map(([cat, st]) => (
-                      <motion.button
-                        key={cat}
-                        type="button"
-                        whileHover={{ y: -3, scale: 1.01 }}
-                        transition={{ duration: 0.22 }}
-                        onClick={() =>
-                          setEvalCategoryFilter((prev) => (prev === cat ? "all" : cat))
-                        }
-                        className={`rounded-2xl border p-4 text-left backdrop-blur-md transition-colors ${
-                          evalCategoryFilter === cat
-                            ? "border-zinc-950 bg-zinc-950 text-white dark:border-white/40 dark:bg-white dark:text-zinc-950"
-                            : "velvet-white-block text-zinc-900 dark:text-zinc-100"
-                        }`}
-                      >
-                        <div className="font-mono text-[10px] uppercase tracking-wider opacity-70">
-                          {cat.replace("_", " / ")}
-                        </div>
-                        <div className="mt-1 flex items-baseline justify-between font-mono">
-                          <span className="text-2xl font-bold tabular-nums">
-                            {st.passed}/{st.total}
-                          </span>
-                          <span className="text-xs font-semibold text-emerald-500">
-                            {st.pass_rate_pct}%
-                          </span>
-                        </div>
-                      </motion.button>
-                    ))}
-                  </div>
-
-                  <div className="velvet-white-block rounded-2xl p-5">
-                    <div className="mb-3 flex flex-wrap items-center justify-between gap-2 border-b border-zinc-200/80 pb-2 font-mono text-xs dark:border-white/10">
-                      <span className="font-semibold text-zinc-950 dark:text-white">
-                        测试用例明细 ({evalCategoryFilter === "all" ? "全部 32 项" : evalCategoryFilter})
-                      </span>
-                      <span className="font-medium text-zinc-700 dark:text-zinc-200">
-                        耗时 {evalReport.duration_ms} ms · 更新于 {evalReport.generated_at}
-                      </span>
-                    </div>
-                    <div className="max-h-[420px] space-y-1.5 overflow-y-auto pr-1">
-                      {evalReport.results
-                        .filter(
-                          (r) => evalCategoryFilter === "all" || r.category === evalCategoryFilter
-                        )
-                        .map((r) => (
-                          <div
-                            key={r.id}
-                            className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-zinc-200/80 bg-white/80 px-3 py-2 text-xs transition-colors hover:border-zinc-400 dark:border-white/15 dark:bg-white/[0.05] dark:hover:border-white/30"
-                          >
-                            <div className="flex items-center gap-2.5">
-                              <span
-                                className={`rounded px-1.5 py-0.5 font-mono text-xs font-bold ${
-                                  r.passed
-                                    ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-500/20 dark:text-emerald-300"
-                                    : "bg-rose-100 text-rose-800 dark:bg-rose-500/20 dark:text-rose-300"
-                                }`}
-                              >
-                                {r.passed ? "PASS" : "FAIL"}
-                              </span>
-                              <span className="font-mono text-xs font-bold text-zinc-900 dark:text-zinc-100">
-                                {r.id}
-                              </span>
-                              <span className="font-medium text-zinc-950 dark:text-zinc-50">{r.name}</span>
-                            </div>
-                            <span className="font-mono text-xs text-zinc-700 dark:text-zinc-300">
-                              {r.elapsed_ms}ms · {JSON.stringify(r.observed)}
-                            </span>
-                          </div>
-                        ))}
-                    </div>
-                  </div>
-                </>
-              ) : (
-                <div className="velvet-white-block rounded-2xl p-8 text-center font-mono text-xs text-zinc-500 dark:text-zinc-400">
-                  点击右上角「立即运行 Golden Evals」获取 32 项自动化验证得分。
-                </div>
-              )}
-            </motion.div>
-          ) : (
-            <motion.div
-              key="choreography"
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -8 }}
-              transition={{ duration: 0.28, ease: EASE_EXPO }}
-              className="space-y-5"
-            >
-              {/* Monochrome Header Card */}
-              <div
-                onMouseMove={handleSpotlightMove}
-                className="velvet-black-block flex flex-col justify-between gap-4 rounded-2xl p-6 text-white sm:flex-row sm:items-center"
-              >
-                <div>
-                  <div className="inline-flex items-center gap-1.5 font-mono text-[11px] uppercase tracking-widest text-zinc-400">
-                    <Layers className="h-3.5 w-3.5" />
-                    <span>1 Deterministic Cockpit + 3 Closed-Loop Agents</span>
-                  </div>
-                  <h1 className="mt-1 font-serif text-3xl tracking-tight text-white">
-                    闭环工作流编排与风控流转预览
-                  </h1>
-                  <p className="mt-1 text-xs text-zinc-400">
-                    点击下方黑白交替节点或开启自动演示，预览「数据底座 → 自主调查 → 独立风控对抗 → 模拟实盘 → 自我反思」的完整链路。
-                  </p>
-                </div>
-
+      {/* Borderless Floating Apple Liquid Glass 5-Module Dock + Telemetry Strip */}
+      <div className="mb-6 flex flex-wrap items-center justify-between gap-4">
+        <LayoutGroup id="dataplatform-liquid-glass-tabs">
+          <div className="apple-liquid-glass relative flex flex-wrap items-center gap-1 rounded-[26px] p-1.5 md:flex-nowrap md:rounded-full">
+            {navTabs.map((tab) => {
+              const Icon = tab.icon;
+              const active = activeTab === tab.id;
+              return (
                 <button
+                  key={tab.id}
                   type="button"
-                  onClick={() => setAutoPlay((v) => !v)}
-                  className={`inline-flex shrink-0 items-center gap-2 rounded-full px-4 py-2 text-xs font-semibold transition-all active:scale-[0.98] ${
-                    autoPlay
-                      ? "bg-emerald-500 text-zinc-950"
-                      : "bg-white text-zinc-950 hover:bg-zinc-200"
+                  onClick={() => setActiveTab(tab.id)}
+                  className={`relative inline-flex shrink-0 items-center gap-2 whitespace-nowrap rounded-full px-4 py-2.5 font-sans text-sm tracking-tight transition-colors duration-200 ${
+                    active
+                      ? "font-semibold text-zinc-950 dark:text-white"
+                      : "font-medium text-zinc-700 hover:text-zinc-950 dark:text-zinc-200 dark:hover:text-white"
                   }`}
                 >
-                  {autoPlay ? (
-                    <>
-                      <Pause className="h-3.5 w-3.5" />
-                      暂停自动演示
-                    </>
-                  ) : (
-                    <>
-                      <Play className="h-3.5 w-3.5" />
-                      演示一次全链路流转
-                    </>
+                  {active && (
+                    <motion.span
+                      layoutId="dataplatform-liquid-glass-pill"
+                      transition={{ type: "spring", stiffness: 420, damping: 32, mass: 0.7 }}
+                      className="apple-liquid-glass-active absolute inset-0 rounded-full"
+                    />
                   )}
+                  <Icon className="relative z-10 h-4 w-4 shrink-0" />
+                  <span className="relative z-10">{tab.label}</span>
                 </button>
-              </div>
+              );
+            })}
+          </div>
+        </LayoutGroup>
 
-              {/* 4-Stage Alternating Monochrome Track */}
-              <div className="grid grid-cols-1 gap-3.5 md:grid-cols-4">
-                {stages.map((stage, index) => {
-                  const isSelected = stage.id === activeStage.id;
-                  const stageIcon = [Database, Bot, ShieldAlert, Eye][index] || Bot;
-                  const StageIcon = stageIcon;
+        <div className="hidden items-center gap-2 px-1 font-mono text-xs text-zinc-600 dark:text-zinc-300 xl:flex">
+          <span>{overview ? `${overview.kpis.total_tables} PG Tables` : "16 PG Tables"}</span>
+          <span>·</span>
+          <span>{overview ? `${overview.quality.checks.length} DQ Rules` : "6 DQ Rules"}</span>
+          <span>·</span>
+          <span>
+            {evalRunsData?.latest_report
+              ? `${evalRunsData.latest_report.passed_cases}/${evalRunsData.latest_report.total_cases} 4-Track Evals`
+              : "54 4-Track Evals"}
+          </span>
+        </div>
+      </div>
 
-                  return (
-                    <button
-                      key={stage.id}
-                      type="button"
-                      onClick={() => {
-                        setAutoPlay(false);
-                        setSelectedStageId(stage.id);
-                      }}
-                      onMouseMove={handleSpotlightMove}
-                      className={`group relative flex flex-col justify-between rounded-2xl p-4 text-left transition-all duration-300 ${
-                        isSelected
-                          ? "velvet-black-block text-white -translate-y-0.5"
-                          : "velvet-white-block text-zinc-900 hover:-translate-y-0.5"
-                      }`}
-                    >
-                      <div className="flex items-center justify-between">
-                        <span
-                          className={`font-mono text-[11px] font-semibold ${
-                            isSelected ? "text-zinc-300" : "text-zinc-500"
-                          }`}
-                        >
-                          0{stage.order} · {stage.phase}
-                        </span>
-                        <div
-                          className={`flex h-7 w-7 items-center justify-center rounded-lg border transition-colors ${
-                            isSelected
-                              ? "border-white/20 bg-white/10 text-white"
-                              : "border-zinc-200 bg-zinc-50 text-zinc-700"
-                          }`}
-                        >
-                          <StageIcon className="h-3.5 w-3.5" />
-                        </div>
-                      </div>
+      {apiError && (
+        <div className="mb-4 rounded-2xl border border-rose-500/35 bg-rose-500/10 px-4 py-2.5 font-mono text-xs text-rose-900 dark:text-rose-200">
+          {apiError}
+        </div>
+      )}
 
-                      <div className="mt-3">
-                        <div
-                          className={`text-[11px] font-medium ${
-                            isSelected ? "text-zinc-400" : "text-zinc-500 dark:text-zinc-400"
-                          }`}
-                        >
-                          {stage.tag}
-                        </div>
-                        <div
-                          className={`mt-0.5 text-sm font-semibold ${
-                            isSelected ? "text-white" : "text-zinc-950 dark:text-white"
-                          }`}
-                        >
-                          {stage.title}
-                        </div>
-                        <div
-                          className={`mt-1 text-xs ${
-                            isSelected ? "text-zinc-400" : "text-zinc-500 dark:text-zinc-400"
-                          }`}
-                        >
-                          {stage.subtitle}
-                        </div>
-                      </div>
-                    </button>
-                  );
-                })}
-              </div>
-
-              {/* Alternating Black + White Detail Inspector */}
-              <AnimatePresence mode="wait">
-                <motion.div
-                  key={activeStage.id}
-                  initial={{ opacity: 0, y: 12 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: -10 }}
-                  transition={{ duration: 0.32, ease: EASE_EXPO }}
-                  className="grid grid-cols-1 gap-4 lg:grid-cols-12"
-                >
-                  {/* White Gallery Detail Panel */}
-                  <div
-                    onMouseMove={handleSpotlightMove}
-                    className="velvet-white-block space-y-4 rounded-2xl p-6 lg:col-span-7"
-                  >
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="rounded-full bg-obsidian-950 px-3 py-0.5 font-mono text-xs font-medium text-white dark:bg-white dark:text-zinc-950">
-                        {activeStage.tag}
-                      </span>
-                      <span className="rounded-full border border-zinc-300 bg-zinc-50 px-3 py-0.5 font-mono text-xs text-zinc-700 dark:border-white/15 dark:bg-white/10 dark:text-zinc-200">
-                        目标交付：{activeStage.phase}
-                      </span>
-                    </div>
-
-                    <div>
-                      <h2 className="font-serif text-2xl text-zinc-950 dark:text-white">
-                        {activeStage.title}
-                      </h2>
-                      <p className="mt-2 text-sm leading-relaxed text-zinc-600 dark:text-zinc-300">
-                        {activeStage.summary}
-                      </p>
-                    </div>
-
-                    <div>
-                      <div className="mb-2 font-mono text-[11px] font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
-                        Core Engineering Components
-                      </div>
-                      <div className="flex flex-wrap gap-2">
-                        {activeStage.components.map((comp) => (
-                          <span
-                            key={comp}
-                            className="rounded-lg border border-zinc-200 bg-[#FAF9F6] px-2.5 py-1 font-mono text-xs text-zinc-800 dark:border-white/15 dark:bg-white/[0.06] dark:text-zinc-200"
-                          >
-                            {comp}
-                          </span>
-                        ))}
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Black Obsidian Simulation Trace Panel */}
-                  <div
-                    onMouseMove={handleSpotlightMove}
-                    className="velvet-black-block flex flex-col justify-between rounded-2xl p-6 text-zinc-100 lg:col-span-5"
-                  >
-                    <div className="space-y-3.5">
-                      <div className="flex items-center justify-between border-b border-white/10 pb-2.5">
-                        <span className="font-mono text-xs font-semibold text-white">
-                          SIMULATED EXECUTION TRACE
-                        </span>
-                        <span className="inline-flex items-center gap-1.5 font-mono text-[11px] text-emerald-400">
-                          <StatusDot status="up" />
-                          GUARDED
-                        </span>
-                      </div>
-
-                      <div>
-                        <div className="text-[11px] font-medium text-zinc-400">
-                          触发信号
-                        </div>
-                        <div className="mt-1 rounded-xl border border-white/10 bg-black/50 p-2.5 font-mono text-xs text-zinc-100">
-                          {STAGE_MOCK_FLOW[activeStage.id]?.trigger}
-                        </div>
-                      </div>
-
-                      <div>
-                        <div className="text-[11px] font-medium text-zinc-400">
-                          内置异常兜底与风控栅栏
-                        </div>
-                        <ul className="mt-1.5 space-y-1.5">
-                          {STAGE_MOCK_FLOW[activeStage.id]?.guardrails.map((g) => (
-                            <li
-                              key={g}
-                              className="flex items-center gap-2 text-xs text-zinc-300"
-                            >
-                              <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-emerald-400" />
-                              <span>{g}</span>
-                            </li>
-                          ))}
-                        </ul>
-                      </div>
-                    </div>
-
-                    <div className="mt-4 rounded-xl bg-white p-3 text-zinc-900">
-                      <div className="font-mono text-[11px] font-semibold uppercase text-emerald-700">
-                        Output Artifact
-                      </div>
-                      <p className="mt-0.5 font-mono text-xs leading-relaxed text-zinc-900">
-                        {STAGE_MOCK_FLOW[activeStage.id]?.output}
-                      </p>
-                    </div>
-                  </div>
-                </motion.div>
-              </AnimatePresence>
-            </motion.div>
-          )}
-        </AnimatePresence>
-      </main>
+      {/* Main Content Workspace */}
+      <AnimatePresence mode="wait">
+        {activeTab === "lineage" ? (
+          <motion.div
+            key="lineage"
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -6 }}
+            transition={{ duration: 0.24, ease: EASE_EXPO }}
+          >
+            <DataLineageView
+              overview={overview}
+              health={health}
+              loading={loading}
+              onJumpTab={(t) => setActiveTab(t)}
+            />
+          </motion.div>
+        ) : activeTab === "catalog" ? (
+          <motion.div
+            key="catalog"
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -6 }}
+            transition={{ duration: 0.24, ease: EASE_EXPO }}
+          >
+            <DataCatalogQualityView
+              catalog={overview?.catalog ?? []}
+              quality={overview?.quality ?? null}
+              runningQuality={runningQuality}
+              isReadOnly={isReadOnly}
+              adminToken={adminToken}
+              onRerunQuality={handleRerunQuality}
+              onSyncCompleted={() => void loadAllPlatformState()}
+            />
+          </motion.div>
+        ) : activeTab === "rag" ? (
+          <motion.div
+            key="rag"
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -6 }}
+            transition={{ duration: 0.24, ease: EASE_EXPO }}
+          >
+            <RagGovernanceView
+              ragData={ragData}
+              loading={loading}
+              isReadOnly={isReadOnly}
+              adminToken={adminToken}
+              onRefresh={() => void loadAllPlatformState()}
+            />
+          </motion.div>
+        ) : activeTab === "finops" ? (
+          <motion.div
+            key="finops"
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -6 }}
+            transition={{ duration: 0.24, ease: EASE_EXPO }}
+          >
+            <ProvidersFinOpsView
+              overview={overview}
+              isReadOnly={isReadOnly}
+              adminToken={adminToken}
+              onRefresh={() => void loadAllPlatformState()}
+            />
+          </motion.div>
+        ) : (
+          <motion.div
+            key="evals"
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -6 }}
+            transition={{ duration: 0.24, ease: EASE_EXPO }}
+          >
+            <EvalCenterView
+              evalRunsData={evalRunsData}
+              phoenixUiUrl={overview?.kpis.phoenix_ui_url ?? null}
+              loading={loading}
+              isReadOnly={isReadOnly}
+              adminToken={adminToken}
+              onRefresh={() => void loadAllPlatformState()}
+            />
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

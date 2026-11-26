@@ -9,6 +9,7 @@ import {
   Info,
   Languages,
   Quote,
+  RefreshCw,
   Sparkles,
   X,
 } from "lucide-react";
@@ -19,6 +20,7 @@ import {
   fetchDiscoverArticleDetail,
   resolveApiUrl,
 } from "@/lib/api";
+import { loadClientSettings } from "@/lib/clientSettings";
 
 function RichInlineText({ text }: { text: string }) {
   const cleaned = text.replace(/<\/?(?!b\b)[^>]*>/gi, "");
@@ -87,18 +89,22 @@ export default function DiscoverArticleModal({
   article,
   onClose,
 }: DiscoverArticleModalProps) {
-  // Default strictly to pure Chinese ("一打开默认全中文")
-  const [bilingual, setBilingual] = useState<boolean>(false);
+  // Respect user preference from Settings (defaults to pure Chinese "默认全中文")
+  const [bilingual, setBilingual] = useState<boolean>(
+    () => loadClientSettings().newsDefaultBilingual
+  );
   const [detail, setDetail] = useState<DiscoverArticleDetail | null>(null);
   const [loading, setLoading] = useState<boolean>(false);
+  const [retrying, setRetrying] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!article) return;
-    setBilingual(false);
+    setBilingual(loadClientSettings().newsDefaultBilingual);
     setDetail(null);
     setError(null);
     setLoading(true);
+    setRetrying(false);
 
     let cancelled = false;
     void fetchDiscoverArticleDetail(article.id)
@@ -119,6 +125,22 @@ export default function DiscoverArticleModal({
       cancelled = true;
     };
   }, [article]);
+
+  const handleRetryTranslate = () => {
+    if (!article || retrying) return;
+    setRetrying(true);
+    setError(null);
+    void fetchDiscoverArticleDetail(article.id, true)
+      .then((res) => {
+        setDetail(res);
+      })
+      .catch((err) => {
+        setError(err instanceof Error ? err.message : "重新译制失败，请稍后重试");
+      })
+      .finally(() => {
+        setRetrying(false);
+      });
+  };
 
   useEffect(() => {
     if (!article) return;
@@ -224,7 +246,11 @@ export default function DiscoverArticleModal({
             {/* Headlines */}
             <div>
               <h2 className="font-sans text-xl font-bold leading-snug tracking-tight text-zinc-950 dark:text-white sm:text-2xl">
-                {detail?.title_zh || article.title_zh}
+                {detail?.title_zh && /[\u4e00-\u9fff]/.test(detail.title_zh)
+                  ? detail.title_zh
+                  : /[\u4e00-\u9fff]/.test(article.title_zh || "")
+                  ? article.title_zh
+                  : detail?.title_zh || article.title_zh}
               </h2>
               {bilingual && (
                 <p className="mt-2 border-l-2 border-emerald-500/70 pl-3 font-sans text-sm font-medium leading-relaxed text-zinc-700 dark:text-zinc-300">
@@ -233,12 +259,37 @@ export default function DiscoverArticleModal({
               )}
             </div>
 
-            {/* Paywall / Summary Banner when applicable */}
+            {/* Neutral summary note or incomplete-translation notice */}
+            {detail && (detail.blocks || []).some((b) =>
+              b.type === "callout" || b.type === "list"
+                ? (b.items_en || []).some((en, i) => {
+                    const zh = b.items_zh?.[i] || "";
+                    return en.length > 24 && !/[\u4e00-\u9fff]{2}/.test(zh);
+                  })
+                : Boolean(b.en && b.en.length > 24 && !/[\u4e00-\u9fff]{2}/.test(b.zh || ""))
+            ) && (
+              <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-amber-400/50 bg-amber-50/90 px-3.5 py-2 text-xs text-amber-950 dark:border-amber-500/35 dark:bg-amber-950/35 dark:text-amber-200">
+                <div className="flex items-center gap-2">
+                  <Info className="h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
+                  <span>部分段落尚未完成中文译制，可点击右侧按钮实时重译。</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleRetryTranslate}
+                  disabled={retrying}
+                  className="inline-flex items-center gap-1 rounded-full bg-amber-600 px-2.5 py-1 font-mono text-[11px] font-semibold text-white transition hover:bg-amber-700 disabled:opacity-60"
+                >
+                  <RefreshCw className={`h-3 w-3 ${retrying ? "animate-spin" : ""}`} />
+                  <span>{retrying ? "译制中..." : "重新译制中文"}</span>
+                </button>
+              </div>
+            )}
+
             {detail?.access_status === "summary_only" && (
-              <div className="flex items-start gap-2 rounded-xl border border-amber-300/80 bg-amber-50/90 px-3.5 py-2.5 text-xs leading-relaxed text-amber-950 dark:border-amber-500/35 dark:bg-amber-950/35 dark:text-amber-200">
-                <Info className="mt-0.5 h-4 w-4 shrink-0" />
+              <div className="flex items-start gap-2 rounded-xl border border-zinc-200/90 bg-zinc-50/90 px-3.5 py-2.5 text-xs leading-relaxed text-zinc-700 dark:border-white/15 dark:bg-white/[0.05] dark:text-zinc-300">
+                <Info className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
                 <span>
-                  该媒体原网页开启了订阅或访问权限校验，当前已在站内为您展示完整译制的官方核心要点摘要；点击右上角「跳转原网页」可尝试直接访问原媒体站点。
+                  当前展示站内译制的核心要点速览；点击右上角「跳转原网页」或下方同题材多方报道可直达完整原文。
                 </span>
               </div>
             )}

@@ -1,10 +1,14 @@
-# MarketElite 工程开发路线图（Phase 0 → Phase 5）
+# MarketElite 工程演进与交付里程碑档案（Phase 0 → v1.0）
 
-| 阶段 | 核心目标 | 关键交付物 | 验收标准 (DoD) |
+> 记录 **MarketElite v1.0** 从底层基础设施骨架到全栈 DataOps 与 4-Track Eval 治理平台的完整落地阶段。所有阶段均已完成交付并纳入后端回归单测（85 项）与 4-Track 评测（54 项）。
+
+| 演进阶段 | 核心目标 | 已交付关键能力与代码落点 | 状态 |
 | :--- | :--- | :--- | :--- |
-| **Phase 0** *(已完成底座与视觉定调)* | 工程骨架、Git/Docker 底座、4号新视觉基线 | Monorepo 骨架、`docs/` 设计文档、`pgvector` + Redis + Phoenix 容器、白底黑白撞色控制台 | `pytest` & `ruff` 全绿；`http://localhost:3100` & `http://localhost:8100/health` 全组件 UP。 |
-| **Phase 1** *(下一步)* | 确定性数据中台、量化算子与防雪崩缓存 | Alembic 表迁移、外部数据源客户端（含退避重试 + Redis 熔断 + 双 TTL 缓存）、净流动性/GEX/RVOL/广度算子、ARQ 定时调度 | `pytest` 100% 覆盖算子与 429 熔断模拟；数据库稳定生成每日市场快照。 |
-| **Phase 2** | 高密度一页式驾驶舱 & 首次 VPS 上线 | `/api/dashboard/overview`（<50ms）、Lightweight Charts + ECharts 四象限白底黑白撞色驾驶舱、Caddy HTTPS + Cloudflare 公网域名首次上线 | 公网 `https://` 域名可打开实时更新的一页式驾驶舱。 |
-| **Phase 3** | 真 Agent 主脑 + FastMCP + SEC 混合 RAG | `FastMCP (Streamable HTTP)` 工具层、SEC 10-K/10-Q 懒加载 `pgvector+BM25` RAG、LangGraph `Investigator`（含防死循环/上下文 4 道防线）、SSE + Arize Phoenix | 动态多步查股并引用 SEC 原文，Phoenix 可追溯完整 Trace，压测不卡死不超窗。 |
-| **Phase 4** | 风控对抗 + Checkpoint + Alpaca 模拟下单 | `AsyncPostgresSaver`、`Risk Critic` 独立审查、1% 风险预算、HITL `interrupt()` 挂起恢复、Alpaca Paper Trading `OrderClass.BRACKET` 下单 | 完整跑通“提案 → 风控缩仓设止损 → 跨会话 HITL 确认 → Alpaca 模拟盘挂单”。 |
-| **Phase 5** | Watchdog 巡检、长期记忆、Eval 门禁与防刷 | ARQ 盘中异动主动归因、平仓后四象限/Alpha 复盘写入 `pgvector`、30~50 条黄金集横向模型评测、访客配额与 GitHub Actions CI/CD | 公网稳定运行 48h，输出真实 Eval 评测报告与自评测统计看板。 |
+| **Phase 0** | 工程底座与可观测起步 | Monorepo 架构、`docker-compose`（`PostgreSQL 16 + pgvector` / `Redis 7` / `Arize Phoenix`）、FastAPI `/health` 探针与 Next.js App Router 底座 | ✅ 已交付 |
+| **Phase 1** | 确定性数据中台与弹性缓存 | Alpaca/FRED/Finnhub/FMP/Binance/CFTC 数据管道、指数退避重试 + Redis 熔断器 + Soft/Hard 双 TTL 缓存、Net Liquidity / Estimated GEX / RVOL / 广度纯 Python 算子 | ✅ 已交付 |
+| **Phase 2** | 高密度驾驶舱与图表可视化 | `/api/dashboard/overview`、TradingView Lightweight Charts K 线（EMA/Volume/GEX 水位叠加）、ECharts 板块热力与收益曲线、Bull vs Bear 对抗面板与 Price Ladder | ✅ 已交付 |
+| **Phase 3** | 真 Agent 主脑 + FastMCP + SEC 混合 RAG | `FastMCP (Streamable HTTP)` 8 项只读工具、SEC EDGAR 懒加载 `pgvector + tsvector` RRF 混合检索、LangGraph `Investigator`（4 道防死循环/超窗防线）、SSE 流式推演与线程存档 | ✅ 已交付 |
+| **Phase 4** | 独立风控对抗、HITL 断点与多券商账户 | `AsyncPostgresSaver` 持久化、`Risk Critic` 1% 硬限仓与 Bracket 标尺、6 类统一券商适配（Sandbox / Alpaca / IBKR Flex / Binance RO / Trading212 / CSV）、多租户 `X-Workspace-Id` 隔离 | ✅ 已交付 |
+| **Phase 5** | 24/7 Watchdog 哨兵、记忆与 Golden Eval | `WatchdogAutopilotManager` 后台主动巡检、平仓后 2×2 四象限归因与 Alpha vs SPY、AI 周期教练、`EpisodicMemory` 置顶铁律库、`evals/run_eval.py`（32 条确定性基准） | ✅ 已交付 |
+| **v0.8 – v0.9** | 微结构 6+6+12 与 Liquid Glass 三主题引擎 | 补全 FINRA ATS 暗池、机构资金流、链上脉搏、领涨领跌榜与双语即时新闻翻译；重构晨雾白 / 暖砂纸 / 曜石黑 Liquid Glass 主题与 Zero-Border Aurora 无边框极光卡片 | ✅ 已交付 |
+| **v1.0.0** *(当前开源版本)* | DataOps 与 4-Track Eval 中台 + 体验抛光 + 开源零密钥就绪 | 升级为 **数据与评测中台**（16 表 4 层数仓血缘、6 项 DQ 审计、RAG 治理、FinOps、4-Track 54 条评测集与基线对比）；落地 `PUBLIC_SHOWCASE_READONLY` 只读守卫；红蓝对抗大白话重构、40 条分类提示词（10s 轮播）与问答折叠、券商 45s Redis 缓存 + 前端 SWR 秒切；新增 **0-Key 静态演示快照 Seed** | ✅ 已交付 |

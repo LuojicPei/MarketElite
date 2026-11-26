@@ -2,18 +2,42 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 import logging
+import os
 import re
 from typing import Any
-from urllib.parse import quote
+from urllib.parse import quote, urlencode
 
 import httpx
 
+from app.core.config import get_settings
 from app.services.resilience import DualTTLCache
 
 logger = logging.getLogger(__name__)
 
-_TR_ITEM_PREFIX = "marketelite:tr:free:en_zh:v1:"
+_TR_ITEM_PREFIX = "marketelite:tr:free:en_zh:v2:"
+
+
+def _needs_retry_zh(zh_text: str, en_source: str) -> bool:
+    """Detect failed, mojibake, or half-untranslated English tails."""
+    zh = str(zh_text or "").strip()
+    if not zh:
+        return bool(str(en_source or "").strip())
+    up = zh.upper()
+    if "\ufffd" in zh or "MYMEMORY" in up or "QUERY LENGTH LIMIT" in up or "Ã©" in zh or "â€™" in zh:
+        return True
+    en_plain = re.sub(r"</?b>", "", str(en_source or ""), flags=re.IGNORECASE)
+    en_letters = len(re.findall(r"[A-Za-z]", en_plain))
+    if en_letters < 18:
+        return False
+    zh_plain = re.sub(r"</?b>", "", zh, flags=re.IGNORECASE)
+    cjk_count = len(re.findall(r"[\u4e00-\u9fff]", zh_plain))
+    if cjk_count < 2:
+        return True
+    # Detect half-translated paragraph where English clause remained untranslated at tail
+    ascii_words = re.findall(r"\b[a-z]{3,}\b", zh_plain)
+    return len(ascii_words) >= 6 and cjk_count < len(ascii_words) * 2
 
 
 def polish_finance_zh(zh_text: str, en_source: str) -> str:
@@ -46,24 +70,48 @@ def polish_finance_zh(zh_text: str, en_source: str) -> str:
             out = out.replace("人为", "Anthropic")
     out = re.sub(r"<\s*b\s*>\s*", "<b>", out, flags=re.IGNORECASE)
     out = re.sub(r"\s*<\s*/\s*b\s*>", "</b>", out, flags=re.IGNORECASE)
+    # Remove unbalanced trailing/orphan <b> or </b> tags left by NMT
+    if out.count("<b>") != out.count("</b>"):
+        out = re.sub(r"</?b>", "", out)
     return " ".join(out.split())
 
 
-def _chunk_texts_for_get(texts: list[str], *, max_items: int = 8, max_encoded_len: int = 1350) -> list[list[str]]:
-    """Split text batch into safe GET query chunks well below URL length limits."""
+def _split_long_sentence(text: str, max_len: int = 580) -> list[str]:
+    """Split long paragraph along clean sentence boundaries instead of mid-word truncation."""
+    txt = " ".join(str(text or "").split())
+    if len(txt) <= max_len:
+        return [txt] if txt else []
+    sentences = re.split(r"(?<=[.!?])\s+", txt)
+    parts: list[str] = []
+    cur = ""
+    for s in sentences:
+        if cur and len(cur) + 1 + len(s) > max_len:
+            parts.append(cur.strip())
+            cur = s
+        else:
+            cur = f"{cur} {s}".strip() if cur else s
+    if cur:
+        if len(cur) > max_len:
+            parts.append(cur[:max_len].rsplit(" ", 1)[0] or cur[:max_len])
+        else:
+            parts.append(cur)
+    return parts
+
+
+def _chunk_texts_for_post(texts: list[str], *, max_items: int = 5, max_encoded_len: int = 1800) -> list[list[str]]:
+    """Split text batch into compact form-POST chunks so Google clients5 translates every slot cleanly."""
     chunks: list[list[str]] = []
     cur_batch: list[str] = []
     cur_len = 0
     for txt in texts:
-        enc_len = len(quote(txt, safe="")) + 6
+        safe_txt = txt
+        enc_len = len(quote(safe_txt, safe="")) + 6
         if cur_batch and (len(cur_batch) >= max_items or cur_len + enc_len > max_encoded_len):
             chunks.append(cur_batch)
             cur_batch = []
             cur_len = 0
-        # Truncate ultra-long single paragraph safely so GET never returns 414
-        safe_txt = txt[:900] if len(txt) > 900 else txt
         cur_batch.append(safe_txt)
-        cur_len += min(enc_len, 1400)
+        cur_len += min(enc_len, 1800)
     if cur_batch:
         chunks.append(cur_batch)
     return chunks
@@ -93,21 +141,28 @@ async def _translate_chunk_clients5(
     chunk: list[str],
     client: httpx.AsyncClient,
 ) -> list[str] | None:
-    """Query free Google Chrome Extension translation GET endpoint without API key."""
+    """Query free Google Chrome Extension translation POST endpoint without API key (GET fallback on 405)."""
     if not chunk:
         return []
-    params: list[tuple[str, str]] = [
-        ("client", "dict-chrome-ex"),
-        ("sl", "en"),
-        ("tl", "zh-CN"),
-        *[("q", text) for text in chunk],
-    ]
+    query_params = {
+        "client": "dict-chrome-ex",
+        "sl": "en",
+        "tl": "zh-CN",
+    }
     try:
-        resp = await client.get(
+        resp = await client.post(
             "https://clients5.google.com/translate_a/t",
-            params=params,
+            params=query_params,
+            content=urlencode([("q", text) for text in chunk]),
+            headers={"Content-Type": "application/x-www-form-urlencoded; charset=utf-8"},
             timeout=10.0,
         )
+        if resp.status_code == 405:
+            resp = await client.get(
+                "https://clients5.google.com/translate_a/t",
+                params=[*query_params.items(), *[("q", text) for text in chunk]],
+                timeout=10.0,
+            )
         if resp.status_code != 200:
             logger.debug("clients5 translate returned HTTP %s", resp.status_code)
             return None
@@ -141,6 +196,68 @@ async def _translate_single_mymemory(text: str, client: httpx.AsyncClient) -> st
         return None
 
 
+async def _translate_batch_llm_fallback(
+    texts: list[str],
+    client: httpx.AsyncClient,
+) -> list[str | None]:
+    """L3 production resilience fallback using configured fast OpenAI-compatible LLM when free NMT fails."""
+    if not texts or os.environ.get("PYTEST_CURRENT_TEST"):
+        return [None] * len(texts)
+    settings = get_settings()
+    api_key = settings.llm_fast_api_key.strip()
+    base_url = settings.llm_fast_base_url.strip().rstrip("/")
+    model = settings.llm_fast_model.strip()
+    if not api_key or not base_url or not model:
+        return [None] * len(texts)
+
+    out: list[str | None] = [None] * len(texts)
+    batch_size = 10
+    for start in range(0, len(texts), batch_size):
+        sub = texts[start : start + batch_size]
+        numbered = "\n".join(f"[{i}] {txt}" for i, txt in enumerate(sub))
+        try:
+            resp = await client.post(
+                f"{base_url}/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": model,
+                    "temperature": 0.1,
+                    "messages": [
+                        {
+                            "role": "system",
+                            "content": (
+                                "You are a financial news translator. Translate each numbered English line into "
+                                "natural, accurate Simplified Chinese preserving <b>...</b> tags if present. "
+                                "Return a valid JSON array of strings matching the exact input count."
+                            ),
+                        },
+                        {"role": "user", "content": numbered},
+                    ],
+                },
+                timeout=20.0,
+            )
+            if resp.status_code != 200:
+                continue
+            content = str(
+                (((resp.json().get("choices") or [{}])[0]).get("message") or {}).get("content") or ""
+            ).strip()
+            m = re.search(r"\[.*\]", content, flags=re.DOTALL)
+            if not m:
+                continue
+            arr = json.loads(m.group(0))
+            if isinstance(arr, list) and len(arr) == len(sub):
+                for j, raw_zh in enumerate(arr):
+                    cleaned = polish_finance_zh(str(raw_zh or ""), sub[j])
+                    if not _needs_retry_zh(cleaned, sub[j]):
+                        out[start + j] = cleaned
+        except (httpx.HTTPError, ValueError, TypeError, KeyError):
+            continue
+    return out
+
+
 async def translate_en_to_zh_free(
     texts: list[str],
     *,
@@ -168,8 +285,11 @@ async def translate_en_to_zh_free(
                 and isinstance(env.get("payload"), dict)
                 and env["payload"].get("zh")
             ):
-                results[idx] = polish_finance_zh(str(env["payload"]["zh"]), cleaned_inputs[idx])
-            elif cleaned_inputs[idx]:
+                cached_zh = polish_finance_zh(str(env["payload"]["zh"]), cleaned_inputs[idx])
+                if not _needs_retry_zh(cached_zh, cleaned_inputs[idx]):
+                    results[idx] = cached_zh
+                    continue
+            if cleaned_inputs[idx]:
                 uncached_indices.append(idx)
             else:
                 results[idx] = ""
@@ -180,30 +300,81 @@ async def translate_en_to_zh_free(
             else:
                 results[idx] = ""
 
-    translated_any = any(bool(r) for r in results)
-
     if uncached_indices:
         pending_texts = [cleaned_inputs[i] for i in uncached_indices]
 
         async def _execute_batches(client: httpx.AsyncClient) -> list[str | None]:
-            out: list[str | None] = [None] * len(pending_texts)
-            chunks = _chunk_texts_for_get(pending_texts)
+            # Expand long paragraphs along sentence bounds so nothing clips mid-word
+            flat_texts: list[str] = []
+            spans: list[tuple[int, int]] = []
+            for p_txt in pending_texts:
+                parts = _split_long_sentence(p_txt, max_len=580)
+                if not parts:
+                    parts = [p_txt]
+                start = len(flat_texts)
+                flat_texts.extend(parts)
+                spans.append((start, len(flat_texts)))
+
+            flat_out: list[str | None] = [None] * len(flat_texts)
+            chunks = _chunk_texts_for_post(flat_texts)
             cursor = 0
             for chunk in chunks:
                 batch_res = await _translate_chunk_clients5(chunk, client)
                 if batch_res is not None:
                     for j, raw_zh in enumerate(batch_res):
-                        out[cursor + j] = polish_finance_zh(raw_zh, chunk[j])
-                else:
-                    # Per-item MyMemory fallback when primary batch fails/throttles
-                    mm_results = await asyncio.gather(
-                        *(_translate_single_mymemory(src, client) for src in chunk),
-                        return_exceptions=True,
-                    )
-                    for j, mm_val in enumerate(mm_results):
-                        if isinstance(mm_val, str) and mm_val.strip():
-                            out[cursor + j] = polish_finance_zh(mm_val, chunk[j])
+                        cleaned = polish_finance_zh(raw_zh, chunk[j])
+                        if not _needs_retry_zh(cleaned, chunk[j]):
+                            flat_out[cursor + j] = cleaned
                 cursor += len(chunk)
+
+            # Retry any failed/partial slots individually (strip <b> tags if NMT choked on them)
+            retry_indices = [i for i, val in enumerate(flat_out) if val is None]
+            if retry_indices:
+                sem = asyncio.Semaphore(6)
+
+                async def _retry_one(slot_i: int) -> None:
+                    async with sem:
+                        src = flat_texts[slot_i]
+                        single = await _translate_chunk_clients5([src], client)
+                        if single and single[0]:
+                            cand = polish_finance_zh(single[0], src)
+                            if not _needs_retry_zh(cand, src):
+                                flat_out[slot_i] = cand
+                                return
+                        plain_src = re.sub(r"</?b>", "", src, flags=re.IGNORECASE).strip()
+                        if plain_src and plain_src != src:
+                            single_p = await _translate_chunk_clients5([plain_src], client)
+                            if single_p and single_p[0]:
+                                cand_p = polish_finance_zh(single_p[0], plain_src)
+                                if not _needs_retry_zh(cand_p, plain_src):
+                                    flat_out[slot_i] = cand_p
+                                    return
+                        mm_val = await _translate_single_mymemory(plain_src or src, client)
+                        if isinstance(mm_val, str) and mm_val.strip():
+                            cand_m = polish_finance_zh(mm_val, src)
+                            if not _needs_retry_zh(cand_m, src):
+                                flat_out[slot_i] = cand_m
+
+                await asyncio.gather(*(_retry_one(idx) for idx in retry_indices), return_exceptions=True)
+
+            still_missing = [i for i, val in enumerate(flat_out) if val is None]
+            if still_missing:
+                llm_vals = await _translate_batch_llm_fallback(
+                    [flat_texts[i] for i in still_missing],
+                    client,
+                )
+                for idx, val in zip(still_missing, llm_vals, strict=False):
+                    if val and not _needs_retry_zh(val, flat_texts[idx]):
+                        flat_out[idx] = val
+
+            out: list[str | None] = []
+            for p_txt, (s_idx, e_idx) in zip(pending_texts, spans, strict=False):
+                segs = [flat_out[k] for k in range(s_idx, e_idx)]
+                if all(segs):
+                    joined = polish_finance_zh(" ".join(s for s in segs if s), p_txt)
+                    out.append(joined if not _needs_retry_zh(joined, p_txt) else None)
+                else:
+                    out.append(None)
             return out
 
         if http_client is not None:
@@ -215,9 +386,8 @@ async def translate_en_to_zh_free(
 
         cache_writes = []
         for idx, zh_val in zip(uncached_indices, fresh_vals, strict=False):
-            if zh_val:
+            if zh_val and not _needs_retry_zh(zh_val, cleaned_inputs[idx]):
                 results[idx] = zh_val
-                translated_any = True
                 if cache is not None:
                     key = f"{_TR_ITEM_PREFIX}{hashlib.sha256(cleaned_inputs[idx].encode()).hexdigest()[:16]}"
                     cache_writes.append(
@@ -232,8 +402,15 @@ async def translate_en_to_zh_free(
         if cache_writes:
             await asyncio.gather(*cache_writes, return_exceptions=True)
 
+    non_empty_indices = [i for i, txt in enumerate(cleaned_inputs) if txt]
+    translated_ok = sum(
+        1
+        for i in non_empty_indices
+        if results[i] is not None and not _needs_retry_zh(str(results[i]), cleaned_inputs[i])
+    )
+    translated_all_ok = bool(non_empty_indices) and translated_ok == len(non_empty_indices)
     final_list = [
         results[idx] if results[idx] is not None else cleaned_inputs[idx]
         for idx in range(len(cleaned_inputs))
     ]
-    return final_list, translated_any
+    return final_list, translated_all_ok

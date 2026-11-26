@@ -1,14 +1,19 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from datetime import date, datetime, timedelta, timezone
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import httpx
+from bs4 import BeautifulSoup
 
 from app.core.config import Settings
+from app.quant.macro import build_institutional_flow_summary
 from app.services.resilience import (
     DualTTLCache,
+    ProviderError,
     ProviderUnconfiguredError,
     raise_for_provider_response,
 )
@@ -18,6 +23,69 @@ CFTC_COT_CONTRACTS: dict[str, tuple[str, str]] = {
     "NQ": ("209742", "E-mini Nasdaq-100"),
     "ZN": ("043602", "10-Year U.S. Treasury Note"),
     "GC": ("088691", "Gold COMEX"),
+}
+
+CFTC_INSTITUTIONAL_CONTRACTS: dict[str, dict[str, str]] = {
+    "ES": {
+        "code": "13874A",
+        "dataset": "tff",
+        "name": "E-mini S&P 500",
+        "name_zh": "标普 500 期货",
+        "bucket": "核心股指",
+        "real_money_label": "长线资管 (养老/公募)",
+        "leveraged_label": "对冲基金 / 杠杆热钱",
+        "dealer_label": "华尔街投行自营",
+    },
+    "NQ": {
+        "code": "209742",
+        "dataset": "tff",
+        "name": "E-mini Nasdaq-100",
+        "name_zh": "纳指 100 期货",
+        "bucket": "科技成长",
+        "real_money_label": "长线资管 (养老/公募)",
+        "leveraged_label": "对冲基金 / 杠杆热钱",
+        "dealer_label": "华尔街投行自营",
+    },
+    "ZN": {
+        "code": "043602",
+        "dataset": "tff",
+        "name": "10Y U.S. Treasury Note",
+        "name_zh": "10年美债期货",
+        "bucket": "无风险利率",
+        "real_money_label": "长线资管 (锁息买盘)",
+        "leveraged_label": "对冲基金 (含基差套利)",
+        "dealer_label": "一级交易商做市",
+    },
+    "VX": {
+        "code": "1170E1",
+        "dataset": "tff",
+        "name": "CBOE VIX Futures",
+        "name_zh": "VIX 恐慌期货",
+        "bucket": "波动率情绪",
+        "real_money_label": "长线资管 (尾部对冲)",
+        "leveraged_label": "对冲基金 (波动率空头)",
+        "dealer_label": "投行做市商",
+    },
+    "GC": {
+        "code": "088691",
+        "dataset": "disagg",
+        "name": "Gold COMEX",
+        "name_zh": "COMEX 黄金期货",
+        "bucket": "避险贵金属",
+        "real_money_label": "黄金掉期大行/商业",
+        "leveraged_label": "对冲基金 / CTA趋势盘",
+        "dealer_label": "实业矿商套保盘",
+    },
+    "BTC": {
+        "code": "133741",
+        "dataset": "tff",
+        "name": "CME Bitcoin Futures",
+        "name_zh": "CME 比特币期货",
+        "bucket": "高Beta风向",
+        "real_money_label": "合规资管/ETF做市",
+        "leveraged_label": "对冲基金 (含套利杠杆)",
+        "dealer_label": "CME做市机构",
+    },
 }
 
 
@@ -178,6 +246,119 @@ class MacroFeedsClient:
             "source": "cftc_socrata",
         }
 
+    async def _fetch_cftc_institutional_flow_raw(self) -> dict[str, Any]:
+        tff_codes = [
+            meta["code"]
+            for meta in CFTC_INSTITUTIONAL_CONTRACTS.values()
+            if meta["dataset"] == "tff"
+        ]
+        disagg_codes = [
+            meta["code"]
+            for meta in CFTC_INSTITUTIONAL_CONTRACTS.values()
+            if meta["dataset"] == "disagg"
+        ]
+        code_to_key = {meta["code"]: key for key, meta in CFTC_INSTITUTIONAL_CONTRACTS.items()}
+
+        async def _execute(client: httpx.AsyncClient) -> dict[str, Any]:
+            tff_url = "https://publicreporting.cftc.gov/resource/gpe5-46if.json"
+            disagg_url = "https://publicreporting.cftc.gov/resource/72hh-3qpy.json"
+            tff_where = "cftc_contract_market_code in(" + ",".join(f"'{c}'" for c in tff_codes) + ")"
+            disagg_where = "cftc_contract_market_code in(" + ",".join(f"'{c}'" for c in disagg_codes) + ")"
+
+            tff_task = client.get(
+                tff_url,
+                params={
+                    "$where": tff_where,
+                    "$order": "report_date_as_yyyy_mm_dd DESC",
+                    "$limit": 360,
+                },
+                timeout=22.0,
+            )
+            disagg_task = client.get(
+                disagg_url,
+                params={
+                    "$where": disagg_where,
+                    "$order": "report_date_as_yyyy_mm_dd DESC",
+                    "$limit": 80,
+                },
+                timeout=22.0,
+            )
+            tff_resp, disagg_resp = await asyncio.gather(tff_task, disagg_task)
+            raise_for_provider_response(tff_resp, "cftc_tff")
+            raise_for_provider_response(disagg_resp, "cftc_disagg")
+
+            series_by_key: dict[str, list[dict[str, Any]]] = {
+                k: [] for k in CFTC_INSTITUTIONAL_CONTRACTS
+            }
+
+            for rec in tff_resp.json() or []:
+                key = code_to_key.get(str(rec.get("cftc_contract_market_code", "")))
+                if not key:
+                    continue
+                series_by_key[key].append(
+                    {
+                        "report_date": str(rec.get("report_date_as_yyyy_mm_dd", ""))[:10],
+                        "real_money_long": float(rec.get("asset_mgr_positions_long", 0) or 0),
+                        "real_money_short": float(rec.get("asset_mgr_positions_short", 0) or 0),
+                        "leveraged_long": float(rec.get("lev_money_positions_long", 0) or 0),
+                        "leveraged_short": float(rec.get("lev_money_positions_short", 0) or 0),
+                        "leveraged_spread": float(rec.get("lev_money_positions_spread", 0) or 0),
+                        "dealer_long": float(rec.get("dealer_positions_long_all", 0) or 0),
+                        "dealer_short": float(rec.get("dealer_positions_short_all", 0) or 0),
+                        "open_interest": float(rec.get("open_interest_all", 0) or 0),
+                    }
+                )
+
+            for rec in disagg_resp.json() or []:
+                key = code_to_key.get(str(rec.get("cftc_contract_market_code", "")))
+                if not key:
+                    continue
+                series_by_key[key].append(
+                    {
+                        "report_date": str(rec.get("report_date_as_yyyy_mm_dd", ""))[:10],
+                        "real_money_long": float(rec.get("swap_positions_long_all", 0) or 0),
+                        "real_money_short": float(rec.get("swap__positions_short_all", 0) or 0),
+                        "leveraged_long": float(rec.get("m_money_positions_long_all", 0) or 0),
+                        "leveraged_short": float(rec.get("m_money_positions_short_all", 0) or 0),
+                        "leveraged_spread": float(rec.get("m_money_positions_spread", 0) or 0),
+                        "dealer_long": float(rec.get("prod_merc_positions_long", 0) or 0),
+                        "dealer_short": float(rec.get("prod_merc_positions_short", 0) or 0),
+                        "open_interest": float(rec.get("open_interest_all", 0) or 0),
+                    }
+                )
+
+            return build_institutional_flow_summary(CFTC_INSTITUTIONAL_CONTRACTS, series_by_key)
+
+        if self._http_client is not None:
+            return await _execute(self._http_client)
+        async with httpx.AsyncClient() as client:
+            return await _execute(client)
+
+    async def get_cftc_institutional_flow(self, *, force_refresh: bool = False) -> dict[str, Any]:
+        """Fetch CFTC TFF & Disaggregated 52-week multi-group institutional positioning."""
+        cache_key = "marketelite:cftc:tff:institutional:v1"
+        if self._cache is None:
+            data = await self._fetch_cftc_institutional_flow_raw()
+            return {"status": "ok", **data, "is_stale": False, "source": "cftc_tff_disagg"}
+
+        res = await self._cache.get_or_fetch(
+            cache_key,
+            provider="cftc_tff",
+            fetcher=self._fetch_cftc_institutional_flow_raw,
+            soft_ttl_seconds=3600 * 12,
+            hard_ttl_seconds=86400 * 10,
+            force_refresh=force_refresh,
+        )
+        payload = res.data if isinstance(res.data, dict) else {}
+        return {
+            "status": "ok",
+            **payload,
+            "is_stale": res.is_stale,
+            "cache_status": res.cache_status,
+            "fetched_at": res.fetched_at,
+            "source": "cftc_tff_disagg",
+        }
+
     async def get_fmp_economic_calendar(
         self, *, days_ahead: int = 21, days_back: int = 7
     ) -> list[dict[str, Any]]:
@@ -239,9 +420,13 @@ class MacroFeedsClient:
         return list(res.data)
 
     async def get_finnhub_earnings_calendar(
-        self, *, days_ahead: int = 14, days_back: int = 3
+        self,
+        *,
+        days_ahead: int = 45,
+        days_back: int = 3,
+        extra_symbols: set[str] | None = None,
     ) -> list[dict[str, Any]]:
-        """Fetch upcoming US earnings events from Finnhub."""
+        """Fetch upcoming US earnings events from Finnhub, prioritizing core + watchlist tickers."""
         api_key = self._settings.finnhub_api_key.strip()
         if not api_key:
             raise ProviderUnconfiguredError("FINNHUB_API_KEY is not configured")
@@ -250,6 +435,7 @@ class MacroFeedsClient:
         to_date = (date.today() + timedelta(days=days_ahead)).isoformat()
         url = "https://finnhub.io/api/v1/calendar/earnings"
         params = {"from": from_date, "to": to_date, "token": api_key}
+        et_tz = ZoneInfo("America/New_York")
 
         async def _fetch() -> list[dict[str, Any]]:
             async def _exec(client: httpx.AsyncClient) -> list[dict[str, Any]]:
@@ -280,6 +466,7 @@ class MacroFeedsClient:
                     "JPM",
                     "GS",
                     "LLY",
+                    *(s.upper() for s in (extra_symbols or set()) if s),
                 }
                 items_sorted = sorted(
                     items,
@@ -290,16 +477,25 @@ class MacroFeedsClient:
                     ),
                 )
                 events: list[dict[str, Any]] = []
-                for item in items_sorted[:200]:
+                for item in items_sorted[:250]:
                     sym = str(item.get("symbol", "")).upper()
-                    dt_str = str(item.get("date", ""))
+                    dt_str = str(item.get("date", ""))[:10]
                     if not sym or not dt_str:
                         continue
+                    try:
+                        d_obj = date.fromisoformat(dt_str)
+                    except ValueError:
+                        continue
+                    hour_tag = str(item.get("hour", "")).lower().strip()
+                    hr, mn = (8, 0) if hour_tag == "bmo" else (16, 5)
+                    ev_utc = datetime(d_obj.year, d_obj.month, d_obj.day, hr, mn, tzinfo=et_tz).astimezone(
+                        timezone.utc
+                    )
                     events.append(
                         {
                             "event_key": f"finnhub:earn:{sym}:{dt_str}",
                             "event_type": "earnings",
-                            "event_time": f"{dt_str}T21:00:00+00:00",
+                            "event_time": ev_utc.isoformat(),
                             "symbol": sym,
                             "country": "US",
                             "title": f"{sym} Q{item.get('quarter', '')} {item.get('year', '')} Earnings",
@@ -431,20 +627,88 @@ class MacroFeedsClient:
         )
         return list(res.data)
 
+    async def get_fmp_price_target_consensus(
+        self, symbol: str
+    ) -> dict[str, Any] | None:
+        """Fetch Wall Street consensus target price (mean/median/high/low) via FMP."""
+        api_key = self._settings.fmp_api_key.strip()
+        sym = symbol.upper().strip()
+        if not api_key or not sym:
+            return None
+
+        url = "https://financialmodelingprep.com/stable/price-target-consensus"
+        params = {"symbol": sym, "apikey": api_key}
+
+        async def _fetch() -> dict[str, Any] | None:
+            async def _exec(client: httpx.AsyncClient) -> dict[str, Any] | None:
+                resp = await client.get(url, params=params, timeout=10.0)
+                if resp.status_code != 200:
+                    return None
+                rows = resp.json()
+                if not isinstance(rows, list) or not rows:
+                    return None
+                row = rows[0] if isinstance(rows[0], dict) else {}
+
+                def _num(v: Any) -> float | None:
+                    if v is None or isinstance(v, bool):
+                        return None
+                    try:
+                        val = float(v)
+                        return round(val, 2) if val > 0 else None
+                    except (TypeError, ValueError):
+                        return None
+
+                consensus = _num(row.get("targetConsensus"))
+                median = _num(row.get("targetMedian"))
+                high = _num(row.get("targetHigh"))
+                low = _num(row.get("targetLow"))
+                if consensus is None and median is None:
+                    return None
+                return {
+                    "symbol": sym,
+                    "target_consensus": consensus or median,
+                    "target_median": median or consensus,
+                    "target_high": high,
+                    "target_low": low,
+                    "source": "fmp",
+                }
+
+            if self._http_client is not None:
+                return await _exec(self._http_client)
+            async with httpx.AsyncClient() as client:
+                return await _exec(client)
+
+        if self._cache is None:
+            return await _fetch()
+        try:
+            res = await self._cache.get_or_fetch(
+                f"marketelite:fmp:price_target:{sym}",
+                provider="fmp",
+                fetcher=_fetch,
+                soft_ttl_seconds=3600 * 12,
+                hard_ttl_seconds=86400 * 7,
+            )
+            return dict(res.data) if isinstance(res.data, dict) else None
+        except ProviderError:
+            return None
+
     async def get_fred_macro_calendar(
-        self, *, days_ahead: int = 45, days_back: int = 3
+        self, *, days_ahead: int = 90, days_back: int = 3
     ) -> list[dict[str, Any]]:
-        """Fetch official upcoming CPI/NFP/PCE/GDP release dates via free FRED release/dates."""
+        """Fetch official upcoming CPI/PPI/NFP/PCE/Retail/GDP release dates via free FRED API."""
         api_key = self._settings.fred_api_key.strip()
         if not api_key:
             raise ProviderUnconfiguredError("FRED_API_KEY is required for FRED release schedule")
 
         releases: dict[int, tuple[str, str]] = {
             10: ("US Consumer Price Index (CPI)", "High"),
+            46: ("US Producer Price Index (PPI)", "Medium"),
             50: ("US Employment Situation (NFP)", "High"),
             54: ("US Personal Income & Outlays (PCE)", "High"),
+            9: ("US Advance Retail Sales", "Medium"),
             53: ("US Gross Domestic Product (GDP)", "High"),
         }
+        et_tz = ZoneInfo("America/New_York")
         start_d = date.today() - timedelta(days=days_back)
         end_d = date.today() + timedelta(days=days_ahead)
 
@@ -460,7 +724,7 @@ class MacroFeedsClient:
                             "file_type": "json",
                             "include_release_dates_with_no_data": "true",
                             "sort_order": "desc",
-                            "limit": 12,
+                            "limit": 16,
                         },
                         timeout=15.0,
                     )
@@ -474,11 +738,12 @@ class MacroFeedsClient:
                         except ValueError:
                             continue
                         if start_d <= d <= end_d:
+                            et_dt = datetime(d.year, d.month, d.day, 8, 30, tzinfo=et_tz)
                             out.append(
                                 {
                                     "event_key": f"fred:rel:{rid}:{dt_raw}",
                                     "event_type": "macro",
-                                    "event_time": f"{dt_raw}T13:30:00+00:00",
+                                    "event_time": et_dt.astimezone(timezone.utc).isoformat(),
                                     "symbol": None,
                                     "country": "US",
                                     "title": title,
@@ -504,6 +769,116 @@ class MacroFeedsClient:
             fetcher=_fetch,
             soft_ttl_seconds=3600 * 12,
             hard_ttl_seconds=86400 * 5,
+        )
+        return list(res.data)
+
+    async def get_fed_fomc_calendar(
+        self, *, days_ahead: int = 365, days_back: int = 3
+    ) -> list[dict[str, Any]]:
+        """Fetch official keyless FOMC meeting schedule straight from federalreserve.gov."""
+        url = "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm"
+        month_lookup = {
+            "january": 1,
+            "jan": 1,
+            "february": 2,
+            "feb": 2,
+            "march": 3,
+            "mar": 3,
+            "april": 4,
+            "apr": 4,
+            "may": 5,
+            "june": 6,
+            "jun": 6,
+            "july": 7,
+            "jul": 7,
+            "august": 8,
+            "aug": 8,
+            "september": 9,
+            "sep": 9,
+            "sept": 9,
+            "october": 10,
+            "oct": 10,
+            "november": 11,
+            "nov": 11,
+            "december": 12,
+            "dec": 12,
+        }
+        et_tz = ZoneInfo("America/New_York")
+        start_d = date.today() - timedelta(days=days_back)
+        end_d = date.today() + timedelta(days=days_ahead)
+
+        async def _fetch() -> list[dict[str, Any]]:
+            async def _exec(client: httpx.AsyncClient) -> list[dict[str, Any]]:
+                resp = await client.get(
+                    url,
+                    timeout=15.0,
+                    headers={"User-Agent": self._settings.sec_edgar_user_agent},
+                )
+                raise_for_provider_response(resp, "fed_fomc")
+                soup = BeautifulSoup(resp.text, "html.parser")
+                out: list[dict[str, Any]] = []
+                for panel in soup.select("div.panel.panel-default"):
+                    heading = panel.select_one("h4, .panel-heading")
+                    year_match = re.search(r"(20\d{2})\s+FOMC", heading.get_text(" ", strip=True) if heading else "")
+                    if not year_match:
+                        continue
+                    year = int(year_match.group(1))
+                    for row in panel.select(".fomc-meeting"):
+                        m_el = row.select_one(".fomc-meeting__month")
+                        d_el = row.select_one(".fomc-meeting__date")
+                        if not m_el or not d_el:
+                            continue
+                        m_raw = m_el.get_text(" ", strip=True).lower()
+                        d_raw = d_el.get_text(" ", strip=True)
+                        # Cross-month meetings look like "Apr/May" or "Jan/Feb" -> decision date uses second month
+                        month_tokens = [tok.strip() for tok in m_raw.split("/") if tok.strip()]
+                        target_month = month_lookup.get(month_tokens[-1]) if month_tokens else None
+                        day_nums = [int(x) for x in re.findall(r"\d{1,2}", d_raw)]
+                        if not target_month or not day_nums:
+                            continue
+                        decision_day = day_nums[-1]
+                        has_sep = "*" in d_raw
+                        try:
+                            dec_date = date(year, target_month, decision_day)
+                        except ValueError:
+                            continue
+                        if not (start_d <= dec_date <= end_d):
+                            continue
+                        et_dt = datetime(dec_date.year, dec_date.month, dec_date.day, 14, 0, tzinfo=et_tz)
+                        out.append(
+                            {
+                                "event_key": f"fed:fomc:{dec_date.isoformat()}",
+                                "event_type": "macro",
+                                "event_time": et_dt.astimezone(timezone.utc).isoformat(),
+                                "symbol": None,
+                                "country": "US",
+                                "title": (
+                                    "FOMC Rate Decision & SEP Projections"
+                                    if has_sep
+                                    else "FOMC Rate Decision"
+                                ),
+                                "impact": "High",
+                                "actual": None,
+                                "estimate": None,
+                                "previous": None,
+                                "source": "federalreserve_gov",
+                            }
+                        )
+                return out
+
+            if self._http_client is not None:
+                return await _exec(self._http_client)
+            async with httpx.AsyncClient(follow_redirects=True) as client:
+                return await _exec(client)
+
+        if self._cache is None:
+            return await _fetch()
+        res = await self._cache.get_or_fetch(
+            "marketelite:fed:fomc_calendar",
+            provider="fed_fomc",
+            fetcher=_fetch,
+            soft_ttl_seconds=86400,
+            hard_ttl_seconds=86400 * 14,
         )
         return list(res.data)
 

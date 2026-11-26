@@ -19,6 +19,7 @@ import SpotlightBlock from "@/components/SpotlightBlock";
 import StockLogoBadge from "@/components/StockLogoBadge";
 import AssetCandlestickChart from "@/components/charts/AssetCandlestickChart";
 import GexProfileChart from "@/components/charts/GexProfileChart";
+import { useTheme } from "@/components/ThemeProvider";
 import {
   AssetDetailResponse,
   SecSearchResponse,
@@ -85,6 +86,7 @@ export default function StockDetailView({
   onOpenAiDrawer,
   onOpenCopilot,
 }: StockDetailViewProps) {
+  const { theme } = useTheme();
   const [detail, setDetail] = useState<AssetDetailResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -339,59 +341,65 @@ export default function StockDetailView({
       <div className="grid grid-cols-1 gap-5 xl:grid-cols-12">
         <SpotlightBlock tone="obsidian" className="space-y-4 p-5 sm:p-6 xl:col-span-8">
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <div className="flex items-center gap-2 font-mono text-xs font-semibold tracking-wider text-zinc-200">
-              <Activity className="h-4 w-4 text-emerald-400" />
+            <div className="flex items-center gap-2 font-mono text-xs font-semibold tracking-wider text-zinc-700 dark:text-zinc-200">
+              <Activity className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
               PRICE STRUCTURE &amp; TECHNICALS · K线量价与均线结构
             </div>
-            <span className="rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-1 font-mono text-xs font-medium text-zinc-100">
+            <span className="rounded-lg border border-zinc-200 bg-zinc-100 px-3 py-1 font-mono text-xs font-medium text-zinc-800 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100">
               {formatVolumePriceTag(detail?.technicals.volume_price_tag)}
             </span>
           </div>
 
-          <div className="grid grid-cols-2 gap-3 rounded-xl border border-zinc-800 bg-zinc-950/75 p-3 font-mono text-xs tabular-nums sm:grid-cols-6">
+          <div className="grid grid-cols-2 gap-3 rounded-xl border border-zinc-200/90 bg-zinc-50/90 p-3 font-mono text-xs tabular-nums dark:border-zinc-800 dark:bg-zinc-950/75 sm:grid-cols-6">
             <div>
-              <span className="block text-zinc-300">RSI(14)</span>
-              <span className="mt-0.5 block text-sm font-bold text-white">
+              <span className="block text-zinc-600 dark:text-zinc-300">RSI(14)</span>
+              <span className="mt-0.5 block text-sm font-bold text-zinc-950 dark:text-white">
                 {detail?.technicals.rsi_14 != null ? detail.technicals.rsi_14.toFixed(1) : "—"}
               </span>
             </div>
             <div>
-              <span className="block text-zinc-300">RVOL(20)</span>
-              <span className="mt-0.5 block text-sm font-bold text-white">
+              <span className="block text-zinc-600 dark:text-zinc-300">RVOL(20)</span>
+              <span className="mt-0.5 block text-sm font-bold text-zinc-950 dark:text-white">
                 {detail?.technicals.rvol_20 != null ? `${detail.technicals.rvol_20.toFixed(2)}x` : "—"}
               </span>
             </div>
             <div>
-              <span className="block text-zinc-300">ATR(14)%</span>
-              <span className="mt-0.5 block text-sm font-bold text-white">
+              <span className="block text-zinc-600 dark:text-zinc-300">ATR(14)%</span>
+              <span className="mt-0.5 block text-sm font-bold text-zinc-950 dark:text-white">
                 {detail?.technicals.atr_pct != null ? `${detail.technicals.atr_pct.toFixed(2)}%` : "—"}
               </span>
             </div>
             <div>
-              <span className="block text-zinc-300">距 50 日线</span>
+              <span className="block text-zinc-600 dark:text-zinc-300">距 50 日线</span>
               <span
                 className={`mt-0.5 block text-sm font-bold ${
-                  (detail?.technicals.dist_50ma_pct ?? 0) >= 0 ? "text-emerald-400" : "text-rose-400"
+                  (detail?.technicals.dist_50ma_pct ?? 0) >= 0
+                    ? "text-emerald-700 dark:text-emerald-400"
+                    : "text-rose-700 dark:text-rose-400"
                 }`}
               >
                 {fmtSigned(detail?.technicals.dist_50ma_pct, 2, "%")}
               </span>
             </div>
             <div>
-              <span className="block text-zinc-300">距 200 日线</span>
+              <span className="block text-zinc-600 dark:text-zinc-300">距 200 日线</span>
               <span
                 className={`mt-0.5 block text-sm font-bold ${
-                  (detail?.technicals.dist_200ma_pct ?? 0) >= 0 ? "text-emerald-400" : "text-rose-400"
+                  (detail?.technicals.dist_200ma_pct ?? 0) >= 0
+                    ? "text-emerald-700 dark:text-emerald-400"
+                    : "text-rose-700 dark:text-rose-400"
                 }`}
               >
                 {fmtSigned(detail?.technicals.dist_200ma_pct, 2, "%")}
               </span>
             </div>
             <div>
-              <span className="block text-zinc-300">MACD 柱</span>
+              <span className="block text-zinc-600 dark:text-zinc-300">MACD 柱</span>
               <span
                 className={`mt-0.5 block text-sm font-bold ${
-                  (detail?.technicals.macd?.histogram ?? 0) >= 0 ? "text-emerald-400" : "text-rose-400"
+                  (detail?.technicals.macd?.histogram ?? 0) >= 0
+                    ? "text-emerald-700 dark:text-emerald-400"
+                    : "text-rose-700 dark:text-rose-400"
                 }`}
               >
                 {detail?.technicals.macd?.histogram != null
@@ -402,11 +410,12 @@ export default function StockDetailView({
           </div>
 
           {loading ? (
-            <div className="flex h-[410px] items-center justify-center rounded-xl border border-zinc-800 bg-zinc-950 font-mono text-sm text-zinc-200">
+            <div className="flex h-[410px] items-center justify-center rounded-xl border border-zinc-200 bg-zinc-50 font-mono text-sm text-zinc-600 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-200">
               正在加载 {symbol} 历史日线与期权结构...
             </div>
           ) : (
             <AssetCandlestickChart
+              theme={theme}
               symbol={symbol}
               bars={detail?.bars ?? []}
               gex={detail?.options_gex}
@@ -516,11 +525,11 @@ export default function StockDetailView({
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-12">
         <SpotlightBlock tone="obsidian" className="space-y-3 p-4 sm:p-5 xl:col-span-4">
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <div className="flex items-center gap-2 font-mono text-xs font-semibold tracking-wider text-zinc-200">
-              <BarChart3 className="h-4 w-4 text-emerald-400" />
+            <div className="flex items-center gap-2 font-mono text-xs font-semibold tracking-wider text-zinc-700 dark:text-zinc-200">
+              <BarChart3 className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
               OPTIONS DEALER GEX WALL · 期权做市商伽马分布
             </div>
-            <span className="font-mono text-xs text-zinc-300">
+            <span className="font-mono text-xs text-zinc-600 dark:text-zinc-300">
               {detail?.options_gex ? `OI 分析 ${detail.options_gex.put_call_ratio?.toFixed(2) ?? "—"} P/C` : "无期权链"}
             </span>
           </div>
@@ -528,31 +537,33 @@ export default function StockDetailView({
           {detail?.options_gex ? (
             <>
               <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-                <div className="rounded-xl border border-zinc-800 bg-zinc-950/75 p-3">
-                  <span className="block font-mono text-xs text-zinc-300">净伽马 Net GEX</span>
+                <div className="rounded-xl border border-zinc-200/90 bg-zinc-50/90 p-3 dark:border-zinc-800 dark:bg-zinc-950/75">
+                  <span className="block font-mono text-xs text-zinc-600 dark:text-zinc-300">净伽马 Net GEX</span>
                   <span
                     className={`mt-1 block font-mono text-lg font-bold tabular-nums ${
-                      detail.options_gex.net_gex >= 0 ? "text-emerald-400" : "text-rose-400"
+                      detail.options_gex.net_gex >= 0
+                        ? "text-emerald-700 dark:text-emerald-400"
+                        : "text-rose-700 dark:text-rose-400"
                     }`}
                   >
                     {fmtBillions(detail.options_gex.net_gex)}
                   </span>
                 </div>
-                <div className="rounded-xl border border-zinc-800 bg-zinc-950/75 p-3">
-                  <span className="block font-mono text-xs text-zinc-300">Call Wall</span>
-                  <span className="mt-1 block font-mono text-lg font-bold tabular-nums text-emerald-400">
+                <div className="rounded-xl border border-zinc-200/90 bg-zinc-50/90 p-3 dark:border-zinc-800 dark:bg-zinc-950/75">
+                  <span className="block font-mono text-xs text-zinc-600 dark:text-zinc-300">Call Wall</span>
+                  <span className="mt-1 block font-mono text-lg font-bold tabular-nums text-emerald-700 dark:text-emerald-400">
                     {detail.options_gex.call_wall != null ? fmtUsd(detail.options_gex.call_wall, 0) : "—"}
                   </span>
                 </div>
-                <div className="rounded-xl border border-zinc-800 bg-zinc-950/75 p-3">
-                  <span className="block font-mono text-xs text-zinc-300">Put Wall</span>
-                  <span className="mt-1 block font-mono text-lg font-bold tabular-nums text-rose-400">
+                <div className="rounded-xl border border-zinc-200/90 bg-zinc-50/90 p-3 dark:border-zinc-800 dark:bg-zinc-950/75">
+                  <span className="block font-mono text-xs text-zinc-600 dark:text-zinc-300">Put Wall</span>
+                  <span className="mt-1 block font-mono text-lg font-bold tabular-nums text-rose-700 dark:text-rose-400">
                     {detail.options_gex.put_wall != null ? fmtUsd(detail.options_gex.put_wall, 0) : "—"}
                   </span>
                 </div>
-                <div className="rounded-xl border border-zinc-800 bg-zinc-950/75 p-3">
-                  <span className="block font-mono text-xs text-zinc-300">Zero Gamma</span>
-                  <span className="mt-1 block font-mono text-lg font-bold tabular-nums text-amber-300">
+                <div className="rounded-xl border border-zinc-200/90 bg-zinc-50/90 p-3 dark:border-zinc-800 dark:bg-zinc-950/75">
+                  <span className="block font-mono text-xs text-zinc-600 dark:text-zinc-300">Zero Gamma</span>
+                  <span className="mt-1 block font-mono text-lg font-bold tabular-nums text-amber-700 dark:text-amber-300">
                     {detail.options_gex.zero_gamma != null ? fmtUsd(detail.options_gex.zero_gamma, 2) : "—"}
                   </span>
                 </div>
@@ -567,7 +578,7 @@ export default function StockDetailView({
               />
             </>
           ) : (
-            <div className="flex h-[240px] items-center justify-center rounded-xl border border-zinc-800 bg-zinc-950/60 px-6 text-center text-sm text-zinc-300">
+            <div className="flex h-[240px] items-center justify-center rounded-xl border border-zinc-200 bg-zinc-50 px-6 text-center text-sm text-zinc-600 dark:border-zinc-800 dark:bg-zinc-950/60 dark:text-zinc-300">
               {symbol} 暂未检测到美股期权 GEX 快照，请重点参考左侧 K 线均线与右侧估值指标。
             </div>
           )}

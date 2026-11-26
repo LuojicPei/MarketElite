@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 from collections.abc import Sequence
@@ -8,7 +9,7 @@ from typing import Any
 
 import httpx
 import redis.asyncio as aioredis
-from sqlalchemy import desc, select
+from sqlalchemy import desc, func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -21,6 +22,7 @@ from app.db.models import (
     MarketRegimeDaily,
     OptionsGexSnapshot,
     PaperTrade,
+    UserWatchlistItem,
 )
 from app.quant.macro import (
     compute_fear_greed_index,
@@ -37,6 +39,7 @@ from app.quant.technicals import (
     compute_market_breadth,
     compute_sector_rotation,
 )
+from app.services.macro_history import build_macro_release_history
 from app.services.news_discover import get_or_refresh_discover_news
 from app.services.providers.alpaca import (
     CORE_INDEX_ETFS,
@@ -45,6 +48,7 @@ from app.services.providers.alpaca import (
     AlpacaClient,
 )
 from app.services.providers.cboe import CboeClient
+from app.services.providers.cnn_fear_greed import fetch_cnn_fear_greed
 from app.services.providers.fred import FRED_CORE_SERIES, FredClient
 from app.services.providers.macro_feeds import MacroFeedsClient
 from app.services.resilience import (
@@ -344,16 +348,33 @@ async def sync_calendars(
     redis_client: aioredis.Redis | None,
     settings: Settings,
 ) -> dict[str, Any]:
-    """Fetch upcoming US macro events (FMP) and earnings (Finnhub) into economic_calendar."""
+    """Fetch upcoming US macro events (Fed/FRED/FMP) and earnings (Finnhub) into economic_calendar."""
     cache = _make_cache(redis_client)
     feeds = MacroFeedsClient(settings, cache=cache)
     events: list[dict[str, Any]] = []
     states: dict[str, str] = {}
 
+    watchlist_syms: set[str] = set()
+    try:
+        async with session_factory() as session:
+            wl_rows = (await session.execute(select(UserWatchlistItem.symbol))).scalars().all()
+            watchlist_syms = {str(s).upper().strip() for s in wl_rows if s}
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("Watchlist read skipped during calendar sync: %s", exc)
+
+    # 1. Keyless official Federal Reserve FOMC schedule (never requires third-party key)
+    try:
+        fomc_events = await feeds.get_fed_fomc_calendar()
+        events.extend(fomc_events)
+        states["fed_fomc"] = f"ok ({len(fomc_events)})"
+    except (ProviderError, httpx.HTTPError) as exc:
+        states["fed_fomc"] = f"error: {exc}"
+
+    # 2. FMP Economic Calendar (if Pro tier available)
     try:
         macro_events = await feeds.get_fmp_economic_calendar()
         events.extend(macro_events)
-        states["fmp"] = "ok"
+        states["fmp"] = f"ok ({len(macro_events)})"
     except ProviderUnconfiguredError:
         states["fmp"] = "unconfigured"
     except (ProviderError, httpx.HTTPError) as exc:
@@ -363,20 +384,21 @@ async def sync_calendars(
         else:
             states["fmp"] = f"error: {err_text}"
 
-    if states.get("fmp") != "ok":
-        try:
-            fred_events = await feeds.get_fred_macro_calendar()
-            events.extend(fred_events)
-            states["fred_calendar"] = f"ok ({len(fred_events)})"
-        except ProviderUnconfiguredError:
-            states["fred_calendar"] = "unconfigured"
-        except (ProviderError, httpx.HTTPError) as exc:
-            states["fred_calendar"] = f"error: {exc}"
-
+    # 3. Free official FRED Release Dates (CPI / PPI / NFP / PCE / Retail Sales / GDP)
     try:
-        earn_events = await feeds.get_finnhub_earnings_calendar()
+        fred_events = await feeds.get_fred_macro_calendar()
+        events.extend(fred_events)
+        states["fred_calendar"] = f"ok ({len(fred_events)})"
+    except ProviderUnconfiguredError:
+        states["fred_calendar"] = "unconfigured"
+    except (ProviderError, httpx.HTTPError) as exc:
+        states["fred_calendar"] = f"error: {exc}"
+
+    # 4. Finnhub corporate earnings prioritizing core + watchlist symbols
+    try:
+        earn_events = await feeds.get_finnhub_earnings_calendar(extra_symbols=watchlist_syms)
         events.extend(earn_events)
-        states["finnhub"] = "ok"
+        states["finnhub"] = f"ok ({len(earn_events)})"
     except ProviderUnconfiguredError:
         states["finnhub"] = "unconfigured"
     except (ProviderError, httpx.HTTPError) as exc:
@@ -386,33 +408,38 @@ async def sync_calendars(
         return {"status": "skipped", "states": states, "upserted": 0}
 
     now = datetime.now(timezone.utc)
-    rows = []
+    # Deduplicate by event_key within same batch cleanly
+    dedup_rows: dict[str, dict[str, Any]] = {}
     for ev in events:
-        rows.append(
-            {
-                "event_key": str(ev["event_key"])[:160],
-                "event_type": str(ev.get("event_type", "macro")),
-                "event_time": _parse_event_dt(str(ev.get("event_time", ""))),
-                "symbol": ev.get("symbol"),
-                "country": str(ev.get("country", "US")),
-                "title": str(ev.get("title", ""))[:255],
-                "impact": str(ev.get("impact", "Medium")),
-                "actual": _to_float_or_none(ev.get("actual")),
-                "estimate": _to_float_or_none(ev.get("estimate")),
-                "previous": _to_float_or_none(ev.get("previous")),
-                "eps_actual": _to_float_or_none(ev.get("eps_actual")),
-                "eps_estimate": _to_float_or_none(ev.get("eps_estimate")),
-                "revenue_estimate": _to_float_or_none(ev.get("revenue_estimate")),
-                "source": str(ev.get("source", "fmp")),
-                "fetched_at": now,
-            }
-        )
+        key = str(ev["event_key"])[:160]
+        dedup_rows[key] = {
+            "event_key": key,
+            "event_type": str(ev.get("event_type", "macro")),
+            "event_time": _parse_event_dt(str(ev.get("event_time", ""))),
+            "symbol": ev.get("symbol"),
+            "country": str(ev.get("country", "US")),
+            "title": str(ev.get("title", ""))[:255],
+            "impact": str(ev.get("impact", "Medium")),
+            "actual": _to_float_or_none(ev.get("actual")),
+            "estimate": _to_float_or_none(ev.get("estimate")),
+            "previous": _to_float_or_none(ev.get("previous")),
+            "eps_actual": _to_float_or_none(ev.get("eps_actual")),
+            "eps_estimate": _to_float_or_none(ev.get("eps_estimate")),
+            "revenue_estimate": _to_float_or_none(ev.get("revenue_estimate")),
+            "source": str(ev.get("source", "fmp")),
+            "fetched_at": now,
+        }
+    rows = list(dedup_rows.values())
 
     async with session_factory() as session:
         stmt = pg_insert(EconomicCalendarEvent).values(rows)
         stmt = stmt.on_conflict_do_update(
             constraint="uq_economic_calendar_event_key",
             set_={
+                "event_time": stmt.excluded.event_time,
+                "title": stmt.excluded.title,
+                "impact": stmt.excluded.impact,
+                "source": stmt.excluded.source,
                 "actual": stmt.excluded.actual,
                 "estimate": stmt.excluded.estimate,
                 "eps_actual": stmt.excluded.eps_actual,
@@ -424,6 +451,120 @@ async def sync_calendars(
         await session.commit()
 
     return {"status": "ok", "states": states, "upserted": len(rows)}
+
+
+def _serialize_calendar_event(ev: EconomicCalendarEvent) -> dict[str, Any]:
+    return {
+        "event_key": ev.event_key,
+        "event_type": ev.event_type,
+        "event_time": ev.event_time.isoformat(),
+        "symbol": ev.symbol,
+        "title": ev.title,
+        "impact": ev.impact,
+        "actual": ev.actual,
+        "estimate": ev.estimate,
+        "previous": ev.previous,
+        "eps_actual": ev.eps_actual,
+        "eps_estimate": ev.eps_estimate,
+        "source": ev.source,
+    }
+
+
+async def query_upcoming_calendar_events(
+    session: AsyncSession,
+    *,
+    macro_limit: int = 80,
+    earnings_limit: int = 120,
+) -> dict[str, Any]:
+    """Read upcoming macro releases and focus/watchlist corporate earnings from PostgreSQL."""
+    now_utc = datetime.now(timezone.utc)
+    macro_stmt = (
+        select(EconomicCalendarEvent)
+        .where(
+            EconomicCalendarEvent.event_type == "macro",
+            EconomicCalendarEvent.event_time >= now_utc - timedelta(days=2),
+        )
+        .order_by(EconomicCalendarEvent.event_time)
+        .limit(macro_limit)
+    )
+    macro_rows = list((await session.execute(macro_stmt)).scalars().all())
+    macro_rows.sort(
+        key=lambda ev: (
+            0 if (ev.impact or "").lower() == "high" else 1,
+            0 if ev.event_time >= now_utc - timedelta(hours=6) else 1,
+            ev.event_time,
+        )
+    )
+
+    wl_syms = {
+        str(s).upper().strip()
+        for s in (await session.execute(select(UserWatchlistItem.symbol))).scalars().all()
+        if s
+    }
+    trade_syms = {
+        str(s).upper().strip()
+        for s in (
+            await session.execute(
+                select(PaperTrade.symbol).where(
+                    PaperTrade.status.in_(["submitted", "filled", "accepted", "pending_hitl"])
+                )
+            )
+        )
+        .scalars()
+        .all()
+        if s
+    }
+    focus_earn_symbols: set[str] = {
+        *DEFAULT_EQUITY_UNIVERSE,
+        "AMD",
+        "PLTR",
+        "TSM",
+        "NFLX",
+        "COIN",
+        "ORCL",
+        "CRM",
+        "MU",
+        "INTC",
+        "JPM",
+        "GS",
+        "LLY",
+        "BRK.B",
+        *wl_syms,
+        *trade_syms,
+    }
+
+    earn_stmt = (
+        select(EconomicCalendarEvent)
+        .where(
+            EconomicCalendarEvent.event_type == "earnings",
+            EconomicCalendarEvent.event_time >= now_utc - timedelta(days=1),
+            EconomicCalendarEvent.symbol.in_(focus_earn_symbols),
+        )
+        .order_by(EconomicCalendarEvent.event_time)
+        .limit(earnings_limit)
+    )
+    earn_rows = list((await session.execute(earn_stmt)).scalars().all())
+    earn_rows.sort(
+        key=lambda ev: (
+            0 if (ev.symbol or "").upper() in wl_syms else 1,
+            0 if (ev.impact or "").lower() == "high" else 1,
+            ev.event_time,
+        )
+    )
+
+    merged_cal = macro_rows[:40] + earn_rows[:24]
+    merged_cal.sort(
+        key=lambda ev: (
+            0 if (ev.event_type == "macro" and (ev.impact or "").lower() == "high") else 1,
+            ev.event_time,
+        )
+    )
+    return {
+        "watchlist_symbols": sorted(wl_syms),
+        "macro_events": [_serialize_calendar_event(ev) for ev in macro_rows],
+        "earnings_events": [_serialize_calendar_event(ev) for ev in earn_rows[:30]],
+        "upcoming_events": [_serialize_calendar_event(ev) for ev in merged_cal],
+    }
 
 
 async def _load_macro_series_map(
@@ -521,96 +662,8 @@ async def build_and_persist_overview(
                     "is_stale": snap.is_stale,
                 }
 
-        now_utc = datetime.now(timezone.utc)
-        macro_stmt = (
-            select(EconomicCalendarEvent)
-            .where(
-                EconomicCalendarEvent.event_type == "macro",
-                EconomicCalendarEvent.event_time >= now_utc - timedelta(days=2),
-            )
-            .order_by(EconomicCalendarEvent.event_time)
-            .limit(40)
-        )
-        macro_rows = list((await session.execute(macro_stmt)).scalars().all())
-        macro_rows.sort(
-            key=lambda ev: (
-                0 if (ev.impact or "").lower() == "high" else 1,
-                0 if ev.event_time >= now_utc - timedelta(hours=6) else 1,
-                ev.event_time,
-            )
-        )
-
-        # Prioritize macro focus universe + open paper trade symbols + liquid US leaders
-        focus_earn_symbols: set[str] = {
-            *DEFAULT_EQUITY_UNIVERSE,
-            "AMD",
-            "PLTR",
-            "TSM",
-            "NFLX",
-            "COIN",
-            "ORCL",
-            "CRM",
-            "MU",
-            "INTC",
-            "JPM",
-            "GS",
-            "LLY",
-            "BRK.B",
-        }
-        trade_syms = list(
-            (
-                await session.execute(
-                    select(PaperTrade.symbol).where(
-                        PaperTrade.status.in_(["submitted", "filled", "accepted", "pending_hitl"])
-                    )
-                )
-            )
-            .scalars()
-            .all()
-        )
-        focus_earn_symbols.update(s.upper() for s in trade_syms if s)
-
-        earn_stmt = (
-            select(EconomicCalendarEvent)
-            .where(
-                EconomicCalendarEvent.event_type == "earnings",
-                EconomicCalendarEvent.event_time >= now_utc - timedelta(days=1),
-            )
-            .order_by(EconomicCalendarEvent.event_time)
-            .limit(120)
-        )
-        earn_rows = list((await session.execute(earn_stmt)).scalars().all())
-        earn_rows.sort(
-            key=lambda ev: (
-                0 if (ev.symbol or "").upper() in focus_earn_symbols else 1,
-                0 if (ev.impact or "").lower() == "high" else 1,
-                ev.event_time,
-            )
-        )
-
-        merged_cal = macro_rows[:10] + earn_rows[:14]
-        merged_cal.sort(
-            key=lambda ev: (
-                0 if (ev.event_type == "macro" and (ev.impact or "").lower() == "high") else 1,
-                ev.event_time,
-            )
-        )
-        upcoming = [
-            {
-                "event_key": ev.event_key,
-                "event_type": ev.event_type,
-                "event_time": ev.event_time.isoformat(),
-                "symbol": ev.symbol,
-                "title": ev.title,
-                "impact": ev.impact,
-                "actual": ev.actual,
-                "estimate": ev.estimate,
-                "previous": ev.previous,
-                "eps_actual": ev.eps_actual,
-                "eps_estimate": ev.eps_estimate,
-            }
-            for ev in merged_cal
-        ]
+        cal_bundle = await query_upcoming_calendar_events(session)
+        upcoming = cal_bundle["upcoming_events"]
 
     def _latest_val(sid: str) -> float | None:
         pts = macro_map.get(sid, [])
@@ -667,6 +720,20 @@ async def build_and_persist_overview(
     spy_tech = core_technicals.get("SPY", {})
     soxx_tech = core_technicals.get("SOXX", {})
     btc_tech = core_technicals.get("BTCUSDT", {})
+
+    # Align SPY daily close onto Net Liquidity timeline for direct macro-vs-market divergence reading
+    spy_bars_sorted = sorted(spy_bars, key=lambda b: b.trade_date)
+    if net_liq.get("series") and spy_bars_sorted:
+        spy_dates = [b.trade_date for b in spy_bars_sorted]
+        spy_closes_arr = [b.close for b in spy_bars_sorted]
+        spy_idx = 0
+        for pt in net_liq["series"]:
+            pt_date = str(pt["date"])
+            while spy_idx + 1 < len(spy_dates) and spy_dates[spy_idx + 1] <= pt_date:
+                spy_idx += 1
+            if spy_dates[spy_idx] <= pt_date or spy_idx == 0:
+                pt["spy_close"] = round(float(spy_closes_arr[spy_idx]), 2)
+
     spy_20d = spy_tech.get("change_20d_pct") if isinstance(spy_tech, dict) else None
     soxx_20d = soxx_tech.get("change_20d_pct") if isinstance(soxx_tech, dict) else None
     soxx_rel_20d = (
@@ -675,18 +742,28 @@ async def build_and_persist_overview(
         else None
     )
 
-    fear_greed = compute_fear_greed_index(
-        spy_dist_200ma_pct=_to_float_or_none(spy_tech.get("dist_200ma_pct")),
-        spy_20d_return_pct=_to_float_or_none(spy_20d),
-        pct_above_50ma=_to_float_or_none(breadth.get("pct_above_50ma")),
-        rsp_spy_20d_delta_pct=_to_float_or_none(breadth.get("rsp_spy_20d_delta_pct")),
-        vix_spot=_to_float_or_none(vix_struct.get("vix")),
-        vix_vix3m_ratio=_to_float_or_none(vix_struct.get("vix_vix3m_ratio")),
-        hy_oas=_to_float_or_none(yield_credit.get("hy_oas")),
-        hyg_lqd_20d_delta_pct=_to_float_or_none(yield_credit.get("hyg_lqd_20d_delta_pct")),
-        soxx_spy_20d_delta_pct=soxx_rel_20d,
-        btc_20d_return_pct=_to_float_or_none(btc_tech.get("change_20d_pct")),
-    )
+    fear_greed: dict[str, Any] | None = None
+    try:
+        cnn_fg = await fetch_cnn_fear_greed(cache=cache)
+        if cnn_fg.get("score") is not None:
+            fear_greed = cnn_fg
+    except (ProviderError, httpx.HTTPError, OSError, ValueError):
+        fear_greed = None
+
+    if fear_greed is None:
+        fear_greed = compute_fear_greed_index(
+            spy_dist_200ma_pct=_to_float_or_none(spy_tech.get("dist_200ma_pct")),
+            spy_20d_return_pct=_to_float_or_none(spy_20d),
+            pct_above_50ma=_to_float_or_none(breadth.get("pct_above_50ma")),
+            rsp_spy_20d_delta_pct=_to_float_or_none(breadth.get("rsp_spy_20d_delta_pct")),
+            vix_spot=_to_float_or_none(vix_struct.get("vix")),
+            vix_vix3m_ratio=_to_float_or_none(vix_struct.get("vix_vix3m_ratio")),
+            hy_oas=_to_float_or_none(yield_credit.get("hy_oas")),
+            hyg_lqd_20d_delta_pct=_to_float_or_none(yield_credit.get("hyg_lqd_20d_delta_pct")),
+            soxx_spy_20d_delta_pct=soxx_rel_20d,
+            btc_20d_return_pct=_to_float_or_none(btc_tech.get("change_20d_pct")),
+        )
+        fear_greed["source"] = "internal"
 
     spy_gex_net = _to_float_or_none(gex_map.get("SPY", {}).get("net_gex"))
     regime = classify_market_regime(
@@ -831,7 +908,7 @@ async def run_full_pipeline_sync(
         discover_res = await get_or_refresh_discover_news(
             _make_cache(redis_client),
             settings,
-            limit=12,
+            limit=21,
             force_refresh=force_refresh,
         )
         states["discover_news"] = f"ok:{discover_res.get('count', 0)}"
@@ -1086,3 +1163,109 @@ async def get_regime_history(
         }
         for r in rows
     ]
+
+
+async def _sync_extra_watchlist_bars(
+    session_factory: async_sessionmaker[AsyncSession],
+    redis_client: aioredis.Redis | None,
+    settings: Settings,
+) -> int:
+    """Keep custom watchlist tickers outside DEFAULT_EQUITY_UNIVERSE fresh in DB."""
+    if not (settings.alpaca_api_key.strip() and settings.alpaca_secret_key.strip()):
+        return 0
+    async with session_factory() as session:
+        rows = (
+            await session.execute(select(UserWatchlistItem.symbol).distinct())
+        ).scalars().all()
+    universe_set = {s.upper() for s in DEFAULT_EQUITY_UNIVERSE} | {"BTCUSDT"}
+    extra_syms = sorted(
+        {str(s).upper().strip() for s in rows if str(s).strip()} - universe_set
+    )
+    if not extra_syms:
+        return 0
+    cache = _make_cache(redis_client)
+    alpaca = AlpacaClient(settings, cache=cache)
+    res = await alpaca.get_daily_bars(extra_syms, lookback_days=40, force_refresh=False)
+    bars_by_sym: dict[str, list[dict[str, Any]]] = res.get("bars", {})
+    updated = 0
+    async with session_factory() as session:
+        for sym, bar_list in bars_by_sym.items():
+            n = await _upsert_daily_bars(session, sym, "equity", bar_list, "alpaca_sip_1d")
+            if n > 0:
+                updated += 1
+        await session.commit()
+    return updated
+
+
+async def startup_market_bars_warmup(
+    session_factory: async_sessionmaker[AsyncSession],
+    redis_client: aioredis.Redis | None,
+    settings: Settings,
+    interval_seconds: float = 1800.0,
+) -> None:
+    """Keep Postgres daily bars, GEX, and overview aligned when worker daemon is absent."""
+    await asyncio.sleep(2.5)
+    while True:
+        try:
+            async with session_factory() as session:
+                spy_latest = (
+                    await session.execute(
+                        select(func.max(MarketDailyBar.trade_date)).where(
+                            MarketDailyBar.symbol == "SPY"
+                        )
+                    )
+                ).scalar_one_or_none()
+                btc_latest = (
+                    await session.execute(
+                        select(func.max(MarketDailyBar.trade_date)).where(
+                            MarketDailyBar.symbol == "BTCUSDT"
+                        )
+                    )
+                ).scalar_one_or_none()
+
+            has_alpaca = bool(
+                settings.alpaca_api_key.strip() and settings.alpaca_secret_key.strip()
+            )
+            if spy_latest is None and not has_alpaca:
+                from app.services.demo_seed import ensure_demo_snapshot_seeded
+
+                seed_res = await ensure_demo_snapshot_seeded(
+                    session_factory, redis_client, settings, force=False
+                )
+                logger.info("0-Key cold start demo snapshot check: %s", seed_res)
+
+            today_utc = datetime.now(timezone.utc).date()
+            btc_stale = btc_latest is None or btc_latest < today_utc
+            eq_stale = spy_latest is None or (today_utc - spy_latest).days >= 2
+
+            btc_res = await sync_btc_and_cftc(
+                session_factory, redis_client, settings, force_refresh=btc_stale
+            )
+            eq_res = await sync_equities_and_breadth(
+                session_factory, redis_client, settings, force_refresh=eq_stale
+            )
+            extra_n = await _sync_extra_watchlist_bars(session_factory, redis_client, settings)
+            await sync_calendars(session_factory, redis_client, settings)
+            await build_macro_release_history(_make_cache(redis_client), settings)
+            await build_and_persist_overview(
+                session_factory,
+                redis_client,
+                settings,
+                provider_states={
+                    "btc_cftc": btc_res.get("status", "unknown"),
+                    "equities": eq_res.get("status", "unknown"),
+                },
+            )
+            logger.info(
+                "Background market bars warmup synced: btc=%s eq=%s extra_watchlist=%d (prev spy=%s btc=%s)",
+                btc_res.get("status"),
+                eq_res.get("status"),
+                extra_n,
+                spy_latest,
+                btc_latest,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - keep loop alive across transient provider hiccups
+            logger.warning("Background market bars warmup skipped: %s", exc)
+        await asyncio.sleep(max(300.0, float(interval_seconds)))

@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "marketelite-backend"
-version = "0.1.0"
-description = "MarketElite Backend - US Equity Multi-Agent Risk & Market Structure Workstation"
+version = "1.0.0"
+description = "MarketElite v1.0 - US Equity Market Structure, DataOps/4-Track Eval Governance & Multi-Agent Risk Workstation"
 requires-python = ">=3.10"
 dependencies = [
     "fastapi>=0.115.0,<1.0.0",

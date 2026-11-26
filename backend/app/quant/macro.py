@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from datetime import date
+from typing import Any
 
 
 def _clamp(val: float, low: float = 0.0, high: float = 100.0) -> float:
@@ -300,4 +301,253 @@ def compute_fear_greed_index(
         "score": composite,
         "label": label,
         "components": details,
+    }
+
+
+def _percentile_rank(series: Sequence[float], latest_value: float) -> float | None:
+    if len(series) < 4:
+        return None
+    low = min(series)
+    high = max(series)
+    if high - low <= 1e-9:
+        return 50.0
+    return round(((latest_value - low) / (high - low)) * 100.0, 1)
+
+
+def _decode_contract_positioning(
+    key: str,
+    meta: dict[str, Any],
+    rm_net: float,
+    rm_wow: float | None,
+    lev_net: float,
+    lev_wow: float | None,
+    lev_pct_52w: float | None,
+) -> tuple[str, str, str, str]:
+    """Return (crowded_signal, badge_zh, headline_zh, detail_zh) in plain Chinese."""
+    divergence = (rm_net > 0 and lev_net < 0) or (rm_net < 0 and lev_net > 0)
+
+    if lev_pct_52w is not None and lev_pct_52w <= 15.0 and lev_net < 0:
+        signal = "squeeze_risk"
+        badge = "空头极端拥挤 · 逼空高危"
+    elif lev_pct_52w is not None and lev_pct_52w >= 85.0 and lev_net > 0:
+        signal = "crowded_long"
+        badge = "杠杆多头偏挤"
+    elif lev_pct_52w is not None and lev_pct_52w <= 20.0:
+        signal = "defensive_skew"
+        badge = "近一年偏空警戒"
+    elif rm_net > 0 and lev_net > 0:
+        signal = "aligned_long"
+        badge = "双边共识做多"
+    elif divergence:
+        signal = "fighting"
+        badge = "资管 vs 对冲对抗"
+    else:
+        signal = "balanced"
+        badge = "多空相对均衡"
+
+    if key == "VX":
+        if lev_net < 0 and (lev_wow is None or lev_wow <= 0):
+            headline = "对冲基金持续做空 VIX 收租，压低隐波"
+        elif lev_net < 0 and lev_wow is not None and lev_wow > 5000:
+            headline = "对冲基金本周回补 VIX 空单！避险升温预警"
+        else:
+            headline = "VIX 期货杠杆盘平仓防守，波动风险升高"
+        detail = (
+            "对冲基金常态通过做空 VIX 赚取时间衰减收益；一旦杠杆空单大幅回补（本周变动转大额正值），"
+            "往往对应机构紧急对冲尾部黑天鹅。"
+        )
+        return signal, badge, headline, detail
+
+    if key == "ZN":
+        if rm_net > 0 and lev_net < 0:
+            headline = "资管大手笔抢购美债锁定高息，对冲基金做空基差套利"
+        else:
+            headline = "美债期货长短端机构博弈利率拐点"
+        detail = (
+            "10Y 美债期货中，公募养老金普遍持有现货/期货多头对冲股票或锁息，"
+            "对冲基金负持仓常含国债现货+期货基差套利头寸，需结合周变动观察真实抛压。"
+        )
+        return signal, badge, headline, detail
+
+    rm_label = str(meta.get("real_money_label", "长线资管"))
+    lev_label = str(meta.get("leveraged_label", "对冲基金"))
+    if rm_net > 0 and lev_net < 0:
+        headline = f"{rm_label}逢低建仓买多，{lev_label}加杠杆净空对峙"
+    elif rm_net > 0 and lev_net > 0:
+        headline = f"{rm_label}与{lev_label}罕见共振净做多"
+    elif rm_net < 0 and lev_net < 0:
+        headline = "长短线机构一致偏空收缩风险敞口"
+    else:
+        headline = f"{rm_label}减持偏谨慎，{lev_label}短线偏多"
+
+    wow_parts: list[str] = []
+    if rm_wow is not None:
+        wow_parts.append(f"{rm_label}本周{'加多' if rm_wow >= 0 else '减仓'} {abs(rm_wow) / 1000:.1f}K 手")
+    if lev_wow is not None:
+        wow_parts.append(f"{lev_label}本周{'净增' if lev_wow >= 0 else '加空'} {abs(lev_wow) / 1000:.1f}K 手")
+    if lev_pct_52w is not None:
+        wow_parts.append(f"杠杆持仓处近52周 {lev_pct_52w:.0f}% 分位")
+    detail = "；".join(wow_parts) if wow_parts else "机构与杠杆资金保持结构性换手。"
+    return signal, badge, headline, detail
+
+
+def build_institutional_flow_summary(
+    contracts_meta: Mapping[str, Mapping[str, Any]],
+    weekly_series_by_symbol: Mapping[str, list[dict[str, Any]]],
+) -> dict[str, Any]:
+    """Compute multi-group institutional positioning, 52W extremes, and 26W scissors series."""
+    contracts_out: dict[str, dict[str, Any]] = {}
+    latest_report_date: str | None = None
+    squeeze_names: list[str] = []
+    aligned_long_names: list[str] = []
+    fighting_names: list[str] = []
+
+    for key, meta in contracts_meta.items():
+        rows = sorted(
+            weekly_series_by_symbol.get(key, []),
+            key=lambda x: str(x.get("report_date", "")),
+        )
+        if not rows:
+            continue
+
+        latest = rows[-1]
+        prev = rows[-2] if len(rows) >= 2 else None
+        rep_date = str(latest.get("report_date", ""))[:10]
+        if rep_date and (latest_report_date is None or rep_date > latest_report_date):
+            latest_report_date = rep_date
+
+        rm_long = float(latest.get("real_money_long", 0.0) or 0.0)
+        rm_short = float(latest.get("real_money_short", 0.0) or 0.0)
+        rm_net = rm_long - rm_short
+        rm_prev = (
+            float(prev.get("real_money_long", 0.0) or 0.0)
+            - float(prev.get("real_money_short", 0.0) or 0.0)
+            if prev
+            else None
+        )
+        rm_wow = round(rm_net - rm_prev, 0) if rm_prev is not None else None
+
+        lev_long = float(latest.get("leveraged_long", 0.0) or 0.0)
+        lev_short = float(latest.get("leveraged_short", 0.0) or 0.0)
+        lev_spread = float(latest.get("leveraged_spread", 0.0) or 0.0)
+        lev_net = lev_long - lev_short
+        lev_prev = (
+            float(prev.get("leveraged_long", 0.0) or 0.0)
+            - float(prev.get("leveraged_short", 0.0) or 0.0)
+            if prev
+            else None
+        )
+        lev_wow = round(lev_net - lev_prev, 0) if lev_prev is not None else None
+
+        dl_long = float(latest.get("dealer_long", 0.0) or 0.0)
+        dl_short = float(latest.get("dealer_short", 0.0) or 0.0)
+        dl_net = dl_long - dl_short
+        dl_prev = (
+            float(prev.get("dealer_long", 0.0) or 0.0)
+            - float(prev.get("dealer_short", 0.0) or 0.0)
+            if prev
+            else None
+        )
+        dl_wow = round(dl_net - dl_prev, 0) if dl_prev is not None else None
+
+        oi = float(latest.get("open_interest", 0.0) or 0.0)
+        rm_series = [
+            float(r.get("real_money_long", 0.0) or 0.0) - float(r.get("real_money_short", 0.0) or 0.0)
+            for r in rows[-52:]
+        ]
+        lev_series = [
+            float(r.get("leveraged_long", 0.0) or 0.0) - float(r.get("leveraged_short", 0.0) or 0.0)
+            for r in rows[-52:]
+        ]
+
+        rm_pct_52w = _percentile_rank(rm_series, rm_net)
+        lev_pct_52w = _percentile_rank(lev_series, lev_net)
+
+        signal, badge, headline_zh, detail_zh = _decode_contract_positioning(
+            key, meta, rm_net, rm_wow, lev_net, lev_wow, lev_pct_52w
+        )
+
+        if signal == "squeeze_risk":
+            squeeze_names.append(key)
+        elif signal == "aligned_long":
+            aligned_long_names.append(key)
+        elif signal == "fighting":
+            fighting_names.append(key)
+
+        contracts_out[key] = {
+            "symbol": key,
+            "name": str(meta.get("name", key)),
+            "name_zh": str(meta.get("name_zh", key)),
+            "asset_bucket": str(meta.get("bucket", "宏观")),
+            "report_date": rep_date,
+            "open_interest": round(oi, 0),
+            "divergence": (rm_net > 0 and lev_net < 0) or (rm_net < 0 and lev_net > 0),
+            "crowded_signal": signal,
+            "crowded_badge_zh": badge,
+            "headline_zh": headline_zh,
+            "detail_zh": detail_zh,
+            "real_money": {
+                "label": str(meta.get("real_money_label", "长线资管")),
+                "long": round(rm_long, 0),
+                "short": round(rm_short, 0),
+                "net": round(rm_net, 0),
+                "wow_change": rm_wow,
+                "pct_oi": round((rm_net / oi) * 100.0, 2) if oi > 0 else None,
+                "long_short_ratio": round(rm_long / rm_short, 2) if rm_short > 0 else None,
+                "percentile_52w": rm_pct_52w,
+            },
+            "leveraged": {
+                "label": str(meta.get("leveraged_label", "对冲基金")),
+                "long": round(lev_long, 0),
+                "short": round(lev_short, 0),
+                "spread": round(lev_spread, 0),
+                "net": round(lev_net, 0),
+                "wow_change": lev_wow,
+                "pct_oi": round((lev_net / oi) * 100.0, 2) if oi > 0 else None,
+                "long_short_ratio": round(lev_long / lev_short, 2) if lev_short > 0 else None,
+                "percentile_52w": lev_pct_52w,
+            },
+            "dealer": {
+                "label": str(meta.get("dealer_label", "投行自营/做市")),
+                "long": round(dl_long, 0),
+                "short": round(dl_short, 0),
+                "net": round(dl_net, 0),
+                "wow_change": dl_wow,
+            },
+            "series_26w": [
+                {
+                    "date": str(r.get("report_date", ""))[:10],
+                    "real_money_net": round(
+                        float(r.get("real_money_long", 0.0) or 0.0)
+                        - float(r.get("real_money_short", 0.0) or 0.0),
+                        0,
+                    ),
+                    "leveraged_net": round(
+                        float(r.get("leveraged_long", 0.0) or 0.0)
+                        - float(r.get("leveraged_short", 0.0) or 0.0),
+                        0,
+                    ),
+                    "dealer_net": round(
+                        float(r.get("dealer_long", 0.0) or 0.0)
+                        - float(r.get("dealer_short", 0.0) or 0.0),
+                        0,
+                    ),
+                }
+                for r in rows[-26:]
+            ],
+        }
+
+    if squeeze_names:
+        summary_zh = f"聪明钱分歧剧烈：{', '.join(squeeze_names)} 对冲基金空单极度拥挤，谨防逼空急拉"
+    elif fighting_names:
+        summary_zh = f"机构博弈分化：{', '.join(fighting_names)} 出现长线资管拿货、对冲基金加杠杆做空对峙"
+    elif aligned_long_names:
+        summary_zh = f"顺风共识：{', '.join(aligned_long_names)} 获资管与杠杆资金双边净增"
+    else:
+        summary_zh = "华尔街长短线资金持仓整体处于历史中性区间"
+
+    return {
+        "report_date": latest_report_date,
+        "summary_zh": summary_zh,
+        "contracts": contracts_out,
     }

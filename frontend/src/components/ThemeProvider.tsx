@@ -2,7 +2,7 @@
 
 import React, { createContext, useCallback, useContext, useEffect, useState } from "react";
 
-export type VelvetTheme = "light" | "dark";
+export type VelvetTheme = "white" | "cream" | "dark";
 
 interface ThemeContextValue {
   theme: VelvetTheme;
@@ -11,7 +11,7 @@ interface ThemeContextValue {
 }
 
 const ThemeContext = createContext<ThemeContextValue>({
-  theme: "light",
+  theme: "white",
   setTheme: () => undefined,
   toggleTheme: () => undefined,
 });
@@ -23,7 +23,7 @@ export function useTheme(): ThemeContextValue {
 }
 
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
-  const [theme, setThemeState] = useState<VelvetTheme>("light");
+  const [theme, setThemeState] = useState<VelvetTheme>("white");
 
   const applyThemeDom = useCallback((next: VelvetTheme) => {
     if (typeof document === "undefined") return;
@@ -35,14 +35,17 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     try {
       const saved = window.localStorage.getItem(STORAGE_KEY);
-      if (saved === "dark" || saved === "light") {
+      if (saved === "white" || saved === "cream" || saved === "dark") {
         setThemeState(saved);
         applyThemeDom(saved);
+      } else if (saved === "light") {
+        setThemeState("white");
+        applyThemeDom("white");
       } else {
-        applyThemeDom("light");
+        applyThemeDom("white");
       }
     } catch {
-      applyThemeDom("light");
+      applyThemeDom("white");
     }
   }, [applyThemeDom]);
 
@@ -60,72 +63,24 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
   );
 
   const toggleTheme = useCallback(() => {
-    setTheme(theme === "light" ? "dark" : "light");
+    const order: VelvetTheme[] = ["white", "cream", "dark"];
+    const next = order[(order.indexOf(theme) + 1) % order.length];
+    setTheme(next);
   }, [theme, setTheme]);
 
   return (
     <ThemeContext.Provider value={{ theme, setTheme, toggleTheme }}>
-      {/* Ambient Velvet Atmospheric Canvas behind translucent frosted panels */}
+      {/* Static Lightweight Ambient Radial Tint (zero per-frame blur rasterization) */}
       <div
         aria-hidden="true"
-        className="pointer-events-none fixed inset-0 -z-10 overflow-hidden transition-opacity duration-700"
-      >
-        {theme === "dark" ? (
-          <>
-            <div
-              className="velvet-orb-drift absolute -top-28 left-[12%] h-[420px] w-[520px] rounded-full opacity-80"
-              style={{
-                background:
-                  "radial-gradient(circle, rgba(16, 185, 129, 0.08) 0%, rgba(56, 189, 248, 0.04) 45%, transparent 72%)",
-                filter: "blur(64px)",
-              }}
-            />
-            <div
-              className="velvet-orb-drift-slow absolute top-[38%] -right-24 h-[460px] w-[460px] rounded-full opacity-75"
-              style={{
-                background:
-                  "radial-gradient(circle, rgba(161, 161, 170, 0.09) 0%, rgba(225, 29, 72, 0.04) 48%, transparent 74%)",
-                filter: "blur(72px)",
-              }}
-            />
-            <div
-              className="velvet-orb-drift absolute -bottom-24 left-[28%] h-[360px] w-[580px] rounded-full opacity-70"
-              style={{
-                background:
-                  "radial-gradient(circle, rgba(255, 255, 255, 0.045) 0%, transparent 70%)",
-                filter: "blur(68px)",
-              }}
-            />
-          </>
-        ) : (
-          <>
-            <div
-              className="velvet-orb-drift absolute -top-24 left-[10%] h-[420px] w-[560px] rounded-full opacity-90"
-              style={{
-                background:
-                  "radial-gradient(circle, rgba(255, 255, 255, 0.95) 0%, rgba(214, 214, 206, 0.45) 50%, transparent 74%)",
-                filter: "blur(56px)",
-              }}
-            />
-            <div
-              className="velvet-orb-drift-slow absolute top-[35%] -right-16 h-[440px] w-[440px] rounded-full opacity-75"
-              style={{
-                background:
-                  "radial-gradient(circle, rgba(180, 185, 194, 0.28) 0%, rgba(16, 185, 129, 0.05) 48%, transparent 74%)",
-                filter: "blur(64px)",
-              }}
-            />
-            <div
-              className="velvet-orb-drift absolute -bottom-20 left-[22%] h-[360px] w-[540px] rounded-full opacity-70"
-              style={{
-                background:
-                  "radial-gradient(circle, rgba(212, 212, 206, 0.42) 0%, transparent 72%)",
-                filter: "blur(60px)",
-              }}
-            />
-          </>
-        )}
-      </div>
+        className="pointer-events-none fixed inset-0 -z-10 overflow-hidden"
+        style={{
+          background:
+            theme === "dark"
+              ? "radial-gradient(62% 48% at 22% 8%, rgba(16, 185, 129, 0.055) 0%, transparent 70%), radial-gradient(48% 46% at 88% 42%, rgba(56, 189, 248, 0.04) 0%, transparent 72%)"
+              : "radial-gradient(64% 48% at 20% 8%, rgba(255, 255, 255, 0.72) 0%, rgba(214, 214, 206, 0.16) 58%, transparent 78%), radial-gradient(48% 46% at 86% 42%, rgba(16, 185, 129, 0.035) 0%, transparent 72%)",
+        }}
+      />
       {children}
     </ThemeContext.Provider>
   );

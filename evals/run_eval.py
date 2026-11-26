@@ -292,16 +292,55 @@ def run_golden_eval(*, save_report: bool = True) -> dict[str, Any]:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="MarketElite Phase 5 Golden Benchmark Suite")
+    parser = argparse.ArgumentParser(description="MarketElite Multi-Track Golden & Agent Benchmark Suite")
     parser.add_argument("--no-save", action="store_true", help="Do not overwrite latest_report.json")
-    args = parser.parse_args()
-    report = run_golden_eval(save_report=not args.no_save)
-    print(
-        f"[MarketElite Evals] {report['passed_cases']}/{report['total_cases']} passed "
-        f"({report['pass_rate_pct']}%) in {report['duration_ms']}ms"
+    parser.add_argument(
+        "--full",
+        action="store_true",
+        help="Run complete 4-Track evaluation suite (Golden + RAG + Agent Sandbox + Red-Team)",
     )
-    for cat, stats in report["categories"].items():
-        print(f"  - {cat}: {stats['passed']}/{stats['total']} ({stats['pass_rate_pct']}%)")
+    parser.add_argument(
+        "--pass-k",
+        type=int,
+        default=3,
+        help="Number of repeated perturbation trials for Track 3 pass^k reliability check",
+    )
+    args = parser.parse_args()
+
+    if args.full:
+        import asyncio
+        import os
+
+        if os.name == "nt":
+            asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+
+        from app.core.config import get_settings  # noqa: E402
+        from app.services.eval_engine import run_full_eval_suite  # noqa: E402
+
+        report = asyncio.run(
+            run_full_eval_suite(
+                settings=get_settings(),
+                session_factory=None,
+                pass_k_trials=args.pass_k,
+                trigger_source="cli",
+                save_file_report=not args.no_save,
+            )
+        )
+        print(
+            f"[MarketElite 4-Track Evals] {report['passed_cases']}/{report['total_cases']} passed "
+            f"({report['pass_rate_pct']}%) in {report['duration_ms']}ms"
+        )
+        for tid, ts in report.get("tracks", {}).items():
+            print(f"  - {tid}: {ts['passed']}/{ts['total']} ({ts['pass_rate_pct']}%)")
+    else:
+        report = run_golden_eval(save_report=not args.no_save)
+        print(
+            f"[MarketElite Evals] {report['passed_cases']}/{report['total_cases']} passed "
+            f"({report['pass_rate_pct']}%) in {report['duration_ms']}ms"
+        )
+        for cat, stats in report["categories"].items():
+            print(f"  - {cat}: {stats['passed']}/{stats['total']} ({stats['pass_rate_pct']}%)")
+
     if report["passed_cases"] != report["total_cases"]:
         sys.exit(1)
 

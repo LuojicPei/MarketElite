@@ -10,19 +10,21 @@ interface MiniKLineSparklineProps {
   width?: number;
   height?: number;
   showCandles?: boolean;
+  className?: string;
 }
 
 /**
  * Shared SVG micro OHLC K-line & prev-close baseline sparkline used across
  * the bottom macro tape, Homepage Watchlist rows, and My Watchlist cards.
  */
-export default function MiniKLineSparkline({
+function MiniKLineSparkline({
   bars,
   prevClose,
   isUp,
   width = 66,
   height = 28,
   showCandles = true,
+  className = "shrink-0 overflow-visible",
 }: MiniKLineSparklineProps) {
   const uid = useId().replace(/:/g, "");
   const padY = 2.5;
@@ -44,40 +46,64 @@ export default function MiniKLineSparkline({
     const count = bars.length;
     const slotW = width / Math.max(count, 1);
     const candleW = Math.max(1.2, Math.min(3.0, slotW * 0.6));
+    const halfCandle = candleW / 2;
 
-    const pts = bars.map((b, idx) => {
+    const lineSegs: string[] = [];
+    const upWicks: string[] = [];
+    const downWicks: string[] = [];
+    const upBodies: string[] = [];
+    const downBodies: string[] = [];
+    let firstX = 0;
+    let lastX = 0;
+    let lastY = refY;
+
+    for (let idx = 0; idx < count; idx += 1) {
+      const b = bars[idx];
       const x = count === 1 ? width * 0.5 : (idx + 0.5) * slotW;
-      return {
-        x,
-        y: mapY(b.c),
-        oY: mapY(b.o),
-        cY: mapY(b.c),
-        hY: mapY(b.h),
-        lY: mapY(b.l),
-        c: b.c,
-        o: b.o,
-      };
-    });
+      const oY = mapY(b.o);
+      const cY = mapY(b.c);
+      const hY = mapY(b.h);
+      const lY = mapY(b.l);
+      const xStr = x.toFixed(1);
+      const cStr = cY.toFixed(1);
+      if (idx === 0) firstX = x;
+      lastX = x;
+      lastY = cY;
+      lineSegs.push(`${idx === 0 ? "M" : "L"}${xStr},${cStr}`);
 
-    const linePath = pts
-      .map((p, i) => `${i === 0 ? "M" : "L"}${p.x.toFixed(1)},${p.y.toFixed(1)}`)
-      .join(" ");
-    const firstX = pts[0].x.toFixed(1);
-    const lastX = pts[pts.length - 1].x.toFixed(1);
-    const areaPath = `${linePath} L${lastX},${refY.toFixed(1)} L${firstX},${refY.toFixed(1)} Z`;
+      if (showCandles) {
+        const wickCmd = `M${xStr},${hY.toFixed(1)}V${lY.toFixed(1)}`;
+        const top = Math.min(oY, cY);
+        const bodyH = Math.max(1.2, Math.abs(cY - oY));
+        const bodyCmd = `M${(x - halfCandle).toFixed(1)},${top.toFixed(1)}h${candleW.toFixed(1)}v${bodyH.toFixed(1)}h-${candleW.toFixed(1)}Z`;
+        if (b.c >= b.o) {
+          upWicks.push(wickCmd);
+          upBodies.push(bodyCmd);
+        } else {
+          downWicks.push(wickCmd);
+          downBodies.push(bodyCmd);
+        }
+      }
+    }
+
+    const linePath = lineSegs.join(" ");
+    const areaPath = `${linePath} L${lastX.toFixed(1)},${refY.toFixed(1)} L${firstX.toFixed(1)},${refY.toFixed(1)} Z`;
 
     return {
       refY,
-      candleW,
-      pts,
       linePath,
       areaPath,
-      lastPt: pts[pts.length - 1],
+      lastX,
+      lastY,
+      upWicksPath: upWicks.join(" "),
+      downWicksPath: downWicks.join(" "),
+      upBodiesPath: upBodies.join(" "),
+      downBodiesPath: downBodies.join(" "),
     };
-  }, [bars, height, innerH, prevClose, width]);
+  }, [bars, height, innerH, prevClose, showCandles, width]);
 
   if (!geometry) {
-    return <div style={{ width, height }} className="shrink-0" />;
+    return <div style={{ width, height }} className={className} />;
   }
 
   const upStroke = "#10b981";
@@ -89,7 +115,7 @@ export default function MiniKLineSparkline({
       width={width}
       height={height}
       viewBox={`0 0 ${width} ${height}`}
-      className="shrink-0 overflow-visible"
+      className={className}
       aria-hidden="true"
     >
       <defs>
@@ -132,36 +158,23 @@ export default function MiniKLineSparkline({
         strokeDasharray="1.8 2"
       />
 
-      {/* Micro OHLC K-Line Bars */}
-      {showCandles &&
-        geometry.pts.map((p, idx) => {
-          const candleUp = p.c >= p.o;
-          const fill = candleUp ? upStroke : downStroke;
-          const top = Math.min(p.oY, p.cY);
-          const bodyH = Math.max(1.2, Math.abs(p.cY - p.oY));
-          return (
-            <g key={idx}>
-              <line
-                x1={p.x}
-                x2={p.x}
-                y1={p.hY}
-                y2={p.lY}
-                stroke={fill}
-                strokeWidth="0.8"
-                strokeOpacity="0.72"
-              />
-              <rect
-                x={p.x - geometry.candleW / 2}
-                y={top}
-                width={geometry.candleW}
-                height={bodyH}
-                rx="0.35"
-                fill={fill}
-                fillOpacity={candleUp ? "0.78" : "0.84"}
-              />
-            </g>
-          );
-        })}
+      {/* Batched Micro OHLC K-Line Bars (4 paths instead of 50+ SVG nodes) */}
+      {showCandles && (
+        <>
+          {geometry.upWicksPath && (
+            <path d={geometry.upWicksPath} stroke={upStroke} strokeWidth="0.8" strokeOpacity="0.72" fill="none" />
+          )}
+          {geometry.downWicksPath && (
+            <path d={geometry.downWicksPath} stroke={downStroke} strokeWidth="0.8" strokeOpacity="0.72" fill="none" />
+          )}
+          {geometry.upBodiesPath && (
+            <path d={geometry.upBodiesPath} fill={upStroke} fillOpacity="0.78" />
+          )}
+          {geometry.downBodiesPath && (
+            <path d={geometry.downBodiesPath} fill={downStroke} fillOpacity="0.84" />
+          )}
+        </>
+      )}
 
       <path
         d={geometry.linePath}
@@ -173,11 +186,13 @@ export default function MiniKLineSparkline({
         strokeLinecap="round"
       />
       <circle
-        cx={geometry.lastPt.x}
-        cy={geometry.lastPt.y}
+        cx={geometry.lastX}
+        cy={geometry.lastY}
         r="2.0"
         fill={overallColor}
       />
     </svg>
   );
 }
+
+export default React.memo(MiniKLineSparkline);

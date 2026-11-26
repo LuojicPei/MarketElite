@@ -1,10 +1,10 @@
 {
   "status": "ok",
-  "generated_at": "2026-11-20T08:45:35Z",
+  "generated_at": "2026-11-26T20:21:49Z",
   "total_cases": 32,
   "passed_cases": 32,
   "pass_rate_pct": 100.0,
-  "duration_ms": 2.25,
+  "duration_ms": 3.64,
   "categories": {
     "regime_macro": {
       "total": 8,
@@ -33,7 +33,7 @@
       "category": "regime_macro",
       "name": "Risk-Off Stress under VIX Backwardation + Widening HY OAS",
       "passed": true,
-      "elapsed_ms": 0.01,
+      "elapsed_ms": 0.02,
       "observed": {
         "regime_label": "RISK_OFF_STRESS",
         "stress_score": 8
@@ -77,7 +77,7 @@
       "category": "regime_macro",
       "name": "Net Liquidity Accounting Identity (WALCL - TGA - RRP)",
       "passed": true,
-      "elapsed_ms": 0.02,
+      "elapsed_ms": 0.03,
       "observed": {
         "net_liq_bn": 6000.0
       }
@@ -120,7 +120,7 @@
       "category": "options_gex",
       "name": "Negative Net GEX with Spot Below Zero Gamma",
       "passed": true,
-      "elapsed_ms": 0.09,
+      "elapsed_ms": 0.13,
       "observed": {
         "net_gex": -261193750.0,
         "call_wall": 590.0,
@@ -133,7 +133,7 @@
       "category": "options_gex",
       "name": "Positive Net GEX Pinning Around Dominant Call Wall",
       "passed": true,
-      "elapsed_ms": 0.04,
+      "elapsed_ms": 0.05,
       "observed": {
         "net_gex": 270000000.0,
         "call_wall": 510.0,
@@ -146,7 +146,7 @@
       "category": "options_gex",
       "name": "Zero Gamma Crossover Interpolation Exists Between Opposite Strikes",
       "passed": true,
-      "elapsed_ms": 0.03,
+      "elapsed_ms": 0.05,
       "observed": {
         "net_gex": 0.0,
         "call_wall": 145.0,
@@ -159,7 +159,7 @@
       "category": "options_gex",
       "name": "Estimated GEX Assumption Disclosure Always Present",
       "passed": true,
-      "elapsed_ms": 0.02,
+      "elapsed_ms": 0.03,
       "observed": {
         "net_gex": 7056000.0,
         "call_wall": 150.0,
@@ -172,7 +172,7 @@
       "category": "options_gex",
       "name": "RVOL >= 1.5 Up-Day Accumulation Classification",
       "passed": true,
-      "elapsed_ms": 0.43,
+      "elapsed_ms": 0.85,
       "observed": {
         "volume_price_tag": "Volume Expansion Up (Accumulation / Breakout)",
         "rvol_20": 2.4,
@@ -184,7 +184,7 @@
       "category": "options_gex",
       "name": "RVOL >= 1.5 Down-Day Distribution Classification",
       "passed": true,
-      "elapsed_ms": 0.28,
+      "elapsed_ms": 0.45,
       "observed": {
         "volume_price_tag": "Volume Expansion Down (Distribution / Stress)",
         "rvol_20": 2.6,
@@ -196,7 +196,7 @@
       "category": "options_gex",
       "name": "Low RVOL Down-Day Flags Orderly Pullback",
       "passed": true,
-      "elapsed_ms": 0.26,
+      "elapsed_ms": 0.42,
       "observed": {
         "volume_price_tag": "Low-Volume Pullback (Orderly Digestion)",
         "rvol_20": 0.55,
@@ -208,7 +208,7 @@
       "category": "options_gex",
       "name": "EMA20 & RSI14 Computed Properly on 60 Daily Bars",
       "passed": true,
-      "elapsed_ms": 0.25,
+      "elapsed_ms": 0.48,
       "observed": {
         "volume_price_tag": "Low-Volume Drift Up (Thin Conviction)",
         "rvol_20": 1.1,
@@ -220,7 +220,7 @@
       "category": "risk_critic",
       "name": "1% Hard Capital Cap Clamps Oversized 1000-Share Long Proposal",
       "passed": true,
-      "elapsed_ms": 0.07,
+      "elapsed_ms": 0.12,
       "observed": {
         "recommended_qty": 178,
         "was_capped_by_risk": true,
@@ -232,7 +232,7 @@
       "category": "risk_critic",
       "name": "Invalid Long Stop-Loss Above Entry Rejected Deterministically",
       "passed": true,
-      "elapsed_ms": 0.03,
+      "elapsed_ms": 0.04,
       "observed": {
         "recommended_qty": 50,
         "was_capped_by_risk": false,
@@ -268,7 +268,7 @@
       "category": "risk_critic",
       "name": "Missing Stop/Take-Profit Auto-Derived From ATR & Options Walls",
       "passed": true,
-      "elapsed_ms": 0.03,
+      "elapsed_ms": 0.04,
       "observed": {
         "recommended_qty": 25,
         "was_capped_by_risk": false,
@@ -280,7 +280,7 @@
       "category": "risk_critic",
       "name": "Deterministic Critique Counter-Arguments Always Non-Empty",
       "passed": true,
-      "elapsed_ms": 0.04,
+      "elapsed_ms": 0.07,
       "observed": {
         "verdict": "CAUTION_REDUCED",
         "alignment": "COUNTER_TREND"
@@ -315,7 +315,7 @@
       "category": "watchdog_safety",
       "name": "4-Quadrant Good Process + Positive PnL Classification",
       "passed": true,
-      "elapsed_ms": 0.01,
+      "elapsed_ms": 0.02,
       "observed": {
         "quadrant": "GOOD_PROCESS_GOOD_OUTCOME",
         "process_score": 100
@@ -359,7 +359,7 @@
       "category": "watchdog_safety",
       "name": "Trade Intent Detector Extracts Chinese Buy Proposal Cleanly",
       "passed": true,
-      "elapsed_ms": 0.01,
+      "elapsed_ms": 0.02,
       "observed": {
         "detected": true,
         "symbol": "NVDA",
@@ -382,7 +382,7 @@
       "category": "watchdog_safety",
       "name": "Canonical Tool Fingerprint Prevents Identical Argument Loops",
       "passed": true,
-      "elapsed_ms": 0.04,
+      "elapsed_ms": 0.06,
       "observed": {
         "hash_a": "73aa673f696391d6",
         "hash_b": "73aa673f696391d6"
@@ -393,7 +393,7 @@
       "category": "watchdog_safety",
       "name": "RRF Hybrid Fusion Boosts Dual Lexical+Vector Match Above Single Hit",
       "passed": true,
-      "elapsed_ms": 0.04,
+      "elapsed_ms": 0.07,
       "observed": {
         "top_chunk_id": 10,
         "rrf": 0.032787

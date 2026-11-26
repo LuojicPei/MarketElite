@@ -101,16 +101,42 @@ def compute_macd(
         ema_slow = (p - ema_slow) * alpha_slow + ema_slow
         macd_series.append(ema_fast - ema_slow)
 
-    sig = float(np.mean(np.asarray(macd_series[:signal], dtype=np.float64)))
+    sig_track = float(np.mean(np.asarray(macd_series[:signal], dtype=np.float64)))
+    hist_list: list[float] = [macd_series[signal - 1] - sig_track]
     for val in macd_series[signal:]:
-        sig = (val - sig) * alpha_sig + sig
+        sig_track = (val - sig_track) * alpha_sig + sig_track
+        hist_list.append(val - sig_track)
 
     macd_val = macd_series[-1]
-    hist = macd_val - sig
+    hist = hist_list[-1]
+    prev_histogram = hist_list[-2] if len(hist_list) >= 2 else hist
     return {
         "macd": round(macd_val, 4),
-        "signal": round(sig, 4),
+        "signal": round(sig_track, 4),
         "histogram": round(hist, 4),
+        "prev_histogram": round(prev_histogram, 4),
+    }
+
+
+def compute_bollinger_bands(
+    closes: Sequence[float],
+    period: int = 20,
+    num_std: float = 2.0,
+) -> dict[str, float] | None:
+    """Compute Bollinger Bands (middle SMA, upper/lower bands, and width %)."""
+    if period <= 1 or len(closes) < period:
+        return None
+    window = np.asarray(closes[-period:], dtype=np.float64)
+    mid = float(np.mean(window))
+    std = float(np.std(window, ddof=0))
+    upper = mid + num_std * std
+    lower = mid - num_std * std
+    bw = ((upper - lower) / mid) * 100.0 if mid > 0 else 0.0
+    return {
+        "upper": round(upper, 4),
+        "middle": round(mid, 4),
+        "lower": round(lower, 4),
+        "bandwidth_pct": round(bw, 2),
     }
 
 
@@ -205,41 +231,84 @@ def analyze_asset_technicals(bars: Sequence[DailyBarInput]) -> dict[str, object]
     change_5d = _pct_change(closes, 5)
     change_20d = _pct_change(closes, 20)
 
+    latest_yr = bars[-1].trade_date[:4]
+    ytd_base: float | None = None
+    for b in reversed(bars):
+        if b.trade_date[:4] < latest_yr:
+            ytd_base = float(b.close)
+            break
+    if ytd_base is None:
+        for b in bars:
+            if b.trade_date.startswith(latest_yr):
+                ytd_base = float(b.close)
+                break
+    change_ytd = (
+        round(((last_close / ytd_base) - 1.0) * 100.0, 2)
+        if (ytd_base and ytd_base > 0)
+        else None
+    )
+
     sma_50 = compute_sma(closes, 50)
     sma_200 = compute_sma(closes, 200)
     ema_5 = compute_ema(closes, 5)
+    ema_9 = compute_ema(closes, 9)
     ema_10 = compute_ema(closes, 10)
     ema_20 = compute_ema(closes, 20)
     rsi_14 = compute_rsi(closes, 14)
     macd_val = compute_macd(closes)
+    bollinger_val = compute_bollinger_bands(closes, 20, 2.0)
     atr_14 = compute_atr(highs, lows, closes, 14)
     rvol_20, rvol_basis = _session_rvol(bars, 20)
 
     dist_50 = round(((last_close / sma_50) - 1.0) * 100.0, 2) if sma_50 else None
     dist_200 = round(((last_close / sma_200) - 1.0) * 100.0, 2) if sma_200 else None
     atr_pct = round((atr_14 / last_close) * 100.0, 2) if (atr_14 and last_close > 0) else None
+    high_52w = max(highs[-252:]) if highs else None
+    dist_52w_high = (
+        round(((last_close / high_52w) - 1.0) * 100.0, 2)
+        if (high_52w and high_52w > 0)
+        else None
+    )
+    prev_close = round(float(closes[-2]), 4) if len(closes) >= 2 else round(last_close, 4)
+    sparkline_bars = [
+        {
+            "t": idx,
+            "o": round(float(b.open), 4),
+            "h": round(float(b.high), 4),
+            "l": round(float(b.low), 4),
+            "c": round(float(b.close), 4),
+        }
+        for idx, b in enumerate(bars[-18:])
+    ]
 
     return {
         "available": True,
         "as_of_date": bars[-1].trade_date,
         "last_close": round(last_close, 4),
+        "prev_close": prev_close,
         "change_1d_pct": change_1d,
         "change_5d_pct": change_5d,
         "change_20d_pct": change_20d,
+        "change_ytd_pct": change_ytd,
         "ema_5": round(ema_5, 4) if ema_5 is not None else None,
+        "ema_9": round(ema_9, 4) if ema_9 is not None else None,
         "ema_10": round(ema_10, 4) if ema_10 is not None else None,
         "ema_20": round(ema_20, 4) if ema_20 is not None else None,
         "sma_50": round(sma_50, 4) if sma_50 is not None else None,
         "sma_200": round(sma_200, 4) if sma_200 is not None else None,
         "dist_50ma_pct": dist_50,
         "dist_200ma_pct": dist_200,
+        "high_52w": round(float(high_52w), 4) if high_52w is not None else None,
+        "dist_52w_high_pct": dist_52w_high,
         "rsi_14": rsi_14,
         "macd": macd_val,
+        "bollinger": bollinger_val,
         "atr_14": atr_14,
         "atr_pct": atr_pct,
         "rvol_20": rvol_20,
         "rvol_basis": rvol_basis,
         "volume_price_tag": classify_volume_price_quadrant(change_1d or 0.0, rvol_20),
+        "sparkline_bars": sparkline_bars,
     }
 
 

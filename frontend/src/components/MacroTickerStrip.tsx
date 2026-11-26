@@ -30,7 +30,67 @@ function formatTapeDelta(absVal: number, pctVal: number, decimals: number): stri
   return `${signAbs}${absStr} ${signPct}${pctStr}%`;
 }
 
-export default function MacroTickerStrip({
+const MacroTickerChip = React.memo(function MacroTickerChip({
+  item,
+  isSelected,
+  onSelectProxy,
+  shouldIgnoreClick,
+}: {
+  item: MacroTapeItem;
+  isSelected: boolean;
+  onSelectProxy: (proxySymbol: string, item: MacroTapeItem) => void;
+  shouldIgnoreClick: () => boolean;
+}) {
+  const isUp = item.change_abs >= 0;
+  return (
+    <button
+      type="button"
+      onClick={() => {
+        if (shouldIgnoreClick()) return;
+        onSelectProxy(item.proxy_symbol, item);
+      }}
+      title={`${item.name} (${item.zh_name}) — 点击查看代理标的 ${item.proxy_symbol} 详情`}
+      className={`group relative flex h-full w-auto min-w-[172px] shrink-0 items-center justify-between gap-2.5 border-r border-zinc-200/75 px-3 text-left transition-colors hover:bg-zinc-900/[0.04] dark:border-white/[0.08] dark:hover:bg-white/[0.05] ${
+        isSelected ? "bg-blue-500/[0.06] dark:bg-sky-400/[0.08]" : ""
+      }`}
+    >
+      <div className="shrink-0 whitespace-nowrap leading-tight">
+        <div className="flex items-baseline gap-1">
+          <span className="font-sans text-[11px] font-bold tracking-tight text-blue-700 group-hover:underline dark:text-sky-400">
+            {item.name}
+          </span>
+          <span className="font-sans text-[10px] font-medium text-zinc-700 dark:text-zinc-300">
+            {item.zh_name}
+          </span>
+        </div>
+        <div className="flex items-baseline gap-2">
+          <span className="font-mono text-[11.5px] font-bold tabular-nums text-zinc-950 dark:text-zinc-50">
+            {formatTapePrice(item.price, item.decimals, item.unit)}
+          </span>
+          <span
+            className={`font-mono text-[10px] font-semibold tabular-nums ${
+              isUp
+                ? "text-emerald-700 dark:text-emerald-400"
+                : "text-rose-700 dark:text-rose-400"
+            }`}
+          >
+            {formatTapeDelta(item.change_abs, item.change_pct, item.decimals)}
+          </span>
+        </div>
+      </div>
+
+      <MiniKLineSparkline
+        bars={item.bars}
+        prevClose={item.prev_close}
+        isUp={isUp}
+        width={62}
+        height={26}
+      />
+    </button>
+  );
+});
+
+function MacroTickerStrip({
   selectedSymbol,
   onSelectProxy,
 }: MacroTickerStripProps) {
@@ -42,9 +102,11 @@ export default function MacroTickerStrip({
   const halfWidthRef = useRef(0);
   const hoveredRef = useRef(false);
   const draggingRef = useRef(false);
+  const visibleRef = useRef(true);
   const dragStartXRef = useRef(0);
   const dragStartOffsetRef = useRef(0);
   const dragMovedRef = useRef(false);
+  const shouldIgnoreClick = useCallback(() => dragMovedRef.current, []);
 
   const loadTape = useCallback(async () => {
     try {
@@ -59,8 +121,28 @@ export default function MacroTickerStrip({
 
   useEffect(() => {
     loadTape();
-    const timer = window.setInterval(loadTape, 120_000);
-    return () => window.clearInterval(timer);
+    const timer = window.setInterval(() => {
+      if (typeof document === "undefined" || document.visibilityState === "visible") {
+        loadTape();
+      }
+    }, 45_000);
+    const onVis = () => {
+      const vis = document.visibilityState === "visible";
+      visibleRef.current = vis;
+      if (vis) {
+        loadTape();
+      }
+    };
+    if (typeof document !== "undefined") {
+      visibleRef.current = document.visibilityState === "visible";
+      document.addEventListener("visibilitychange", onVis);
+    }
+    return () => {
+      window.clearInterval(timer);
+      if (typeof document !== "undefined") {
+        document.removeEventListener("visibilitychange", onVis);
+      }
+    };
   }, [loadTape]);
 
   const wrapOffset = useCallback((val: number, halfWidth: number) => {
@@ -103,7 +185,7 @@ export default function MacroTickerStrip({
       lastTs = now;
 
       const halfWidth = halfWidthRef.current;
-      if (halfWidth > 0 && !hoveredRef.current && !draggingRef.current) {
+      if (visibleRef.current && halfWidth > 0 && !hoveredRef.current && !draggingRef.current) {
         offsetRef.current = wrapOffset(
           offsetRef.current + SPEED_PX_PER_SEC * dt,
           halfWidth
@@ -193,59 +275,19 @@ export default function MacroTickerStrip({
           ref={trackRef}
           className="flex h-full w-max items-stretch will-change-transform"
         >
-          {loopItems.map((item, idx) => {
-            const isUp = item.change_abs >= 0;
-            const isSelected = selectedSymbol === item.proxy_symbol;
-            return (
-              <button
-                key={`${item.yahoo_symbol}-${idx}`}
-                type="button"
-                onClick={() => {
-                  if (dragMovedRef.current) return;
-                  onSelectProxy(item.proxy_symbol, item);
-                }}
-                title={`${item.name} (${item.zh_name}) — 点击查看代理标的 ${item.proxy_symbol} 详情`}
-                className={`group relative flex h-full w-auto min-w-[172px] shrink-0 items-center justify-between gap-2.5 border-r border-zinc-200/75 px-3 text-left transition-colors hover:bg-zinc-900/[0.04] dark:border-white/[0.08] dark:hover:bg-white/[0.05] ${
-                  isSelected ? "bg-blue-500/[0.06] dark:bg-sky-400/[0.08]" : ""
-                }`}
-              >
-                <div className="shrink-0 whitespace-nowrap leading-tight">
-                  <div className="flex items-baseline gap-1">
-                    <span className="font-sans text-[11px] font-bold tracking-tight text-blue-700 group-hover:underline dark:text-sky-400">
-                      {item.name}
-                    </span>
-                    <span className="font-sans text-[10px] font-medium text-zinc-700 dark:text-zinc-300">
-                      {item.zh_name}
-                    </span>
-                  </div>
-                  <div className="flex items-baseline gap-2">
-                    <span className="font-mono text-[11.5px] font-bold tabular-nums text-zinc-950 dark:text-zinc-50">
-                      {formatTapePrice(item.price, item.decimals, item.unit)}
-                    </span>
-                    <span
-                      className={`font-mono text-[10px] font-semibold tabular-nums ${
-                        isUp
-                          ? "text-emerald-700 dark:text-emerald-400"
-                          : "text-rose-700 dark:text-rose-400"
-                      }`}
-                    >
-                      {formatTapeDelta(item.change_abs, item.change_pct, item.decimals)}
-                    </span>
-                  </div>
-                </div>
-
-                <MiniKLineSparkline
-                  bars={item.bars}
-                  prevClose={item.prev_close}
-                  isUp={isUp}
-                  width={62}
-                  height={26}
-                />
-              </button>
-            );
-          })}
+          {loopItems.map((item, idx) => (
+            <MacroTickerChip
+              key={`${item.yahoo_symbol}-${idx}`}
+              item={item}
+              isSelected={selectedSymbol === item.proxy_symbol}
+              onSelectProxy={onSelectProxy}
+              shouldIgnoreClick={shouldIgnoreClick}
+            />
+          ))}
         </div>
       </div>
     </aside>
   );
 }
+
+export default React.memo(MacroTickerStrip);

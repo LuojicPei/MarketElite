@@ -30,6 +30,7 @@ from app.mcp_servers.market_server import get_asset_structure, get_market_regime
 from app.quant.risk import RiskSizingRequest, compute_risk_sizing, validate_bracket_prices
 from app.quant.technicals import DailyBarInput, analyze_asset_technicals
 from app.rag.hybrid_search import HybridSecRetriever
+from app.services.broker import BrokerConfig, fetch_unified_broker_state
 from app.services.llm_router import LLMUnconfiguredError, build_pro_llm
 from app.services.providers.alpaca import AlpacaClient
 from app.services.resilience import ProviderError
@@ -85,6 +86,7 @@ class RiskCriticState(TypedDict, total=False):
     call_wall: float | None
     put_wall: float | None
     zero_gamma: float | None
+    structure_levels: dict[str, Any]
     upcoming_catalysts: list[dict[str, Any]]
     sec_risk_excerpt: str
     account: dict[str, Any]
@@ -197,6 +199,125 @@ def _build_deterministic_critique(state: RiskCriticState) -> dict[str, Any]:
     ).model_dump()
 
 
+async def load_symbol_market_facts(
+    session_factory: async_sessionmaker[AsyncSession],
+    symbol: str,
+) -> dict[str, Any]:
+    """Load technicals, Estimated GEX walls, Macro Regime, and 10D catalysts for one ticker."""
+    sym = symbol.upper().strip()
+    spot_price = 0.0
+    tech: dict[str, Any] = {}
+    atr_14: float | None = None
+    call_wall: float | None = None
+    put_wall: float | None = None
+    zero_gamma: float | None = None
+    net_gex: float | None = None
+    put_call_ratio: float | None = None
+    regime_label = "NEUTRAL_ROTATION"
+    catalysts: list[dict[str, Any]] = []
+
+    now = datetime.now(timezone.utc)
+    horizon = now + timedelta(days=10)
+
+    async with session_factory() as session:
+        bars_stmt = (
+            select(MarketDailyBar)
+            .where(MarketDailyBar.symbol == sym)
+            .order_by(desc(MarketDailyBar.trade_date))
+            .limit(220)
+        )
+        db_bars = list((await session.execute(bars_stmt)).scalars().all())
+        db_bars.reverse()
+        if db_bars:
+            spot_price = float(db_bars[-1].close)
+            tech = analyze_asset_technicals(
+                [
+                    DailyBarInput(
+                        trade_date=b.trade_date.isoformat(),
+                        open=b.open,
+                        high=b.high,
+                        low=b.low,
+                        close=b.close,
+                        volume=b.volume,
+                        vwap=b.vwap,
+                    )
+                    for b in db_bars
+                ]
+            )
+            raw_atr = tech.get("atr_14")
+            atr_14 = float(raw_atr) if raw_atr is not None else None
+
+        gex_stmt = (
+            select(OptionsGexSnapshot)
+            .where(OptionsGexSnapshot.symbol == sym)
+            .order_by(desc(OptionsGexSnapshot.snapshot_time))
+            .limit(1)
+        )
+        gex = (await session.execute(gex_stmt)).scalar_one_or_none()
+        if gex is not None:
+            spot_price = spot_price or float(getattr(gex, "spot_price", 0.0) or 0.0)
+            call_wall = getattr(gex, "call_wall", None)
+            put_wall = getattr(gex, "put_wall", None)
+            zero_gamma = getattr(gex, "zero_gamma", None)
+            net_gex = getattr(gex, "net_gex", None)
+            put_call_ratio = getattr(gex, "put_call_ratio", None)
+
+        reg_stmt = (
+            select(MarketRegimeDaily)
+            .order_by(desc(MarketRegimeDaily.regime_date))
+            .limit(1)
+        )
+        reg = (await session.execute(reg_stmt)).scalar_one_or_none()
+        if reg is not None:
+            regime_label = str(reg.regime_label)
+
+        cal_stmt = (
+            select(EconomicCalendarEvent)
+            .where(
+                EconomicCalendarEvent.event_time >= now,
+                EconomicCalendarEvent.event_time <= horizon,
+            )
+            .order_by(EconomicCalendarEvent.event_time)
+            .limit(40)
+        )
+        cal_rows = list((await session.execute(cal_stmt)).scalars().all())
+        for ev in cal_rows:
+            if ev.symbol == sym or (ev.event_type == "macro" and ev.impact == "High"):
+                catalysts.append(
+                    {
+                        "event_type": ev.event_type,
+                        "event_time": ev.event_time.isoformat(),
+                        "symbol": ev.symbol,
+                        "title": ev.title,
+                        "impact": ev.impact,
+                    }
+                )
+
+    return {
+        "symbol": sym,
+        "spot_price": spot_price,
+        "atr_14": atr_14,
+        "atr_pct": tech.get("atr_pct"),
+        "ema_20": tech.get("ema_20"),
+        "sma_50": tech.get("sma_50"),
+        "sma_200": tech.get("sma_200"),
+        "dist_50ma_pct": tech.get("dist_50ma_pct"),
+        "rsi_14": tech.get("rsi_14"),
+        "rvol_20": tech.get("rvol_20"),
+        "change_1d_pct": tech.get("change_1d_pct"),
+        "change_5d_pct": tech.get("change_5d_pct"),
+        "change_20d_pct": tech.get("change_20d_pct"),
+        "volume_price_tag": tech.get("volume_price_tag"),
+        "call_wall": call_wall,
+        "put_wall": put_wall,
+        "zero_gamma": zero_gamma,
+        "net_gex": net_gex,
+        "put_call_ratio": put_call_ratio,
+        "regime_label": regime_label,
+        "catalysts": catalysts[:6],
+    }
+
+
 class RiskCriticRunner:
     """Context-isolated adversarial Risk Critic with durable Postgres HITL checkpoint & Alpaca Paper execution."""
 
@@ -208,107 +329,19 @@ class RiskCriticRunner:
         *,
         alpaca_client: AlpacaClient | None = None,
         pro_llm: Any = None,
+        broker_config: BrokerConfig | None = None,
+        redis_client: Any = None,
     ) -> None:
         self._settings = settings
         self._session_factory = session_factory
         self._checkpointer = checkpointer
         self._alpaca = alpaca_client or AlpacaClient(settings)
         self._pro_llm = pro_llm
+        self._broker_cfg = broker_config
+        self._redis = redis_client
 
     async def _load_symbol_facts(self, symbol: str) -> dict[str, Any]:
-        sym = symbol.upper().strip()
-        spot_price = 0.0
-        atr_14: float | None = None
-        call_wall: float | None = None
-        put_wall: float | None = None
-        zero_gamma: float | None = None
-        regime_label = "NEUTRAL_ROTATION"
-        catalysts: list[dict[str, Any]] = []
-
-        now = datetime.now(timezone.utc)
-        horizon = now + timedelta(days=10)
-
-        async with self._session_factory() as session:
-            bars_stmt = (
-                select(MarketDailyBar)
-                .where(MarketDailyBar.symbol == sym)
-                .order_by(desc(MarketDailyBar.trade_date))
-                .limit(220)
-            )
-            db_bars = list((await session.execute(bars_stmt)).scalars().all())
-            db_bars.reverse()
-            if db_bars:
-                spot_price = float(db_bars[-1].close)
-                tech = analyze_asset_technicals(
-                    [
-                        DailyBarInput(
-                            trade_date=b.trade_date.isoformat(),
-                            open=b.open,
-                            high=b.high,
-                            low=b.low,
-                            close=b.close,
-                            volume=b.volume,
-                            vwap=b.vwap,
-                        )
-                        for b in db_bars
-                    ]
-                )
-                raw_atr = tech.get("atr_14")
-                atr_14 = float(raw_atr) if raw_atr is not None else None
-
-            gex_stmt = (
-                select(OptionsGexSnapshot)
-                .where(OptionsGexSnapshot.symbol == sym)
-                .order_by(desc(OptionsGexSnapshot.snapshot_time))
-                .limit(1)
-            )
-            gex = (await session.execute(gex_stmt)).scalar_one_or_none()
-            if gex is not None:
-                spot_price = spot_price or float(gex.spot_price)
-                call_wall = gex.call_wall
-                put_wall = gex.put_wall
-                zero_gamma = gex.zero_gamma
-
-            reg_stmt = (
-                select(MarketRegimeDaily)
-                .order_by(desc(MarketRegimeDaily.regime_date))
-                .limit(1)
-            )
-            reg = (await session.execute(reg_stmt)).scalar_one_or_none()
-            if reg is not None:
-                regime_label = str(reg.regime_label)
-
-            cal_stmt = (
-                select(EconomicCalendarEvent)
-                .where(
-                    EconomicCalendarEvent.event_time >= now,
-                    EconomicCalendarEvent.event_time <= horizon,
-                )
-                .order_by(EconomicCalendarEvent.event_time)
-                .limit(40)
-            )
-            cal_rows = list((await session.execute(cal_stmt)).scalars().all())
-            for ev in cal_rows:
-                if ev.symbol == sym or (ev.event_type == "macro" and ev.impact == "High"):
-                    catalysts.append(
-                        {
-                            "event_type": ev.event_type,
-                            "event_time": ev.event_time.isoformat(),
-                            "symbol": ev.symbol,
-                            "title": ev.title,
-                            "impact": ev.impact,
-                        }
-                    )
-
-        return {
-            "spot_price": spot_price,
-            "atr_14": atr_14,
-            "call_wall": call_wall,
-            "put_wall": put_wall,
-            "zero_gamma": zero_gamma,
-            "regime_label": regime_label,
-            "catalysts": catalysts[:6],
-        }
+        return await load_symbol_market_facts(self._session_factory, symbol)
 
     def _build_graph(self) -> Any:
         runner = self
@@ -327,15 +360,32 @@ class RiskCriticRunner:
                 "paper": True,
             }
             existing_pos: dict[str, Any] | None = None
-            try:
-                account = await runner._alpaca.get_account()
-                positions = await runner._alpaca.get_positions()
-                for p in positions:
-                    if str(p.get("symbol", "")).upper() == sym:
-                        existing_pos = p
-                        break
-            except (ProviderError, ValueError, OSError) as exc:
-                logger.warning("Alpaca account fetch fallback for Risk Critic: %s", exc)
+            if runner._broker_cfg is not None and runner._broker_cfg.provider in ("sandbox", "trading212"):
+                try:
+                    unified = await fetch_unified_broker_state(
+                        session_factory=runner._session_factory,
+                        settings=runner._settings,
+                        redis_client=runner._redis,
+                        broker_cfg=runner._broker_cfg,
+                    )
+                    if unified.get("account"):
+                        account = dict(unified["account"])
+                    for p in unified.get("positions", []):
+                        if str(p.get("symbol", "")).upper() == sym:
+                            existing_pos = p
+                            break
+                except (ProviderError, ValueError, OSError) as exc:
+                    logger.warning("Broker fetch fallback for Risk Critic: %s", exc)
+            else:
+                try:
+                    account = await runner._alpaca.get_account()
+                    positions = await runner._alpaca.get_positions()
+                    for p in positions:
+                        if str(p.get("symbol", "")).upper() == sym:
+                            existing_pos = p
+                            break
+                except (ProviderError, ValueError, OSError) as exc:
+                    logger.warning("Alpaca account fetch fallback for Risk Critic: %s", exc)
 
             # Check already-ingested SEC risk chunks without triggering slow network download
             sec_excerpt = "No cached SEC 10-K/10-Q chunks yet for this symbol."
@@ -364,6 +414,9 @@ class RiskCriticRunner:
                     symbol=sym,
                     regime_label=facts["regime_label"],
                     top_k=2,
+                    workspace_id=(
+                        runner._broker_cfg.workspace_id if runner._broker_cfg else "default"
+                    ),
                 )
                 lesson_block = EpisodicMemoryRetriever.format_memories_for_prompt(past_lessons)
                 if lesson_block:
@@ -405,6 +458,16 @@ class RiskCriticRunner:
                 "call_wall": facts["call_wall"],
                 "put_wall": facts["put_wall"],
                 "zero_gamma": facts["zero_gamma"],
+                "structure_levels": {
+                    "spot_price": spot,
+                    "atr_14": facts["atr_14"],
+                    "ema_20": facts.get("ema_20"),
+                    "sma_50": facts.get("sma_50"),
+                    "call_wall": facts["call_wall"],
+                    "put_wall": facts["put_wall"],
+                    "zero_gamma": facts["zero_gamma"],
+                    "net_gex": facts.get("net_gex"),
+                },
                 "upcoming_catalysts": facts["catalysts"],
                 "sec_risk_excerpt": sec_excerpt,
                 "account": account,
@@ -478,6 +541,13 @@ class RiskCriticRunner:
                         "rationale": state.get("rationale", ""),
                         "risk_sizing": sizing,
                         "critique": critique,
+                        "structure_levels": state.get("structure_levels") or {
+                            "spot_price": state.get("spot_price"),
+                            "atr_14": state.get("atr_14"),
+                            "call_wall": state.get("call_wall"),
+                            "put_wall": state.get("put_wall"),
+                            "zero_gamma": state.get("zero_gamma"),
+                        },
                         "account": state.get("account", {}),
                         "existing_position": state.get("existing_position"),
                         "upcoming_catalysts": state.get("upcoming_catalysts", []),
@@ -537,8 +607,53 @@ class RiskCriticRunner:
                     "execution_receipt": {"decision": "validation_failed", "detail": err_msg},
                 }
 
+            client_oid = re.sub(r"[^a-zA-Z0-9_-]", "", state["thread_id"])[:40]
+            prov = runner._broker_cfg.provider if runner._broker_cfg else "alpaca"
+            use_sandbox_exec = (
+                runner._broker_cfg is not None
+                and runner._broker_cfg.provider != "alpaca"
+            )
+            if use_sandbox_exec:
+                sbx_order_id = f"sbx-{client_oid}"
+                is_ro_external = prov in ("trading212", "ibkr", "binance", "csv_import")
+                manual_ticket = (
+                    {
+                        "broker": prov,
+                        "ticker": f"{state['symbol']}_US_EQ" if prov == "trading212" else state["symbol"],
+                        "side": state["side"].upper(),
+                        "quantity": final_qty,
+                        "entry_ref": effective_entry,
+                        "stop_loss_price": sl_px,
+                        "take_profit_price": tp_px,
+                        "note": "当前数据源处于只读/导入安全模式，请在您的交易软件内按上述风控参数手动委托，本地拟真台账已记账。",
+                    }
+                    if is_ro_external
+                    else None
+                )
+                return {
+                    "execution_status": "filled",
+                    "execution_error": None,
+                    "execution_receipt": {
+                        "decision": "approved",
+                        "execution_mode": "local_sandbox",
+                        "alpaca_order": {
+                            "id": sbx_order_id,
+                            "symbol": state["symbol"],
+                            "side": state["side"],
+                            "qty": str(final_qty),
+                            "status": "filled",
+                            "filled_avg_price": f"{effective_entry:.2f}",
+                        },
+                        "final_qty": final_qty,
+                        "entry_price": effective_entry,
+                        "stop_loss_price": sl_px,
+                        "take_profit_price": tp_px,
+                        "manual_reference_ticket": manual_ticket,
+                        "manual_t212_ticket": manual_ticket if prov == "trading212" else None,
+                    },
+                }
+
             try:
-                client_oid = re.sub(r"[^a-zA-Z0-9_-]", "", state["thread_id"])[:42]
                 order = await runner._alpaca.submit_bracket_order(
                     symbol=state["symbol"],
                     qty=final_qty,
@@ -553,6 +668,7 @@ class RiskCriticRunner:
                     "execution_error": None,
                     "execution_receipt": {
                         "decision": "approved",
+                        "execution_mode": "alpaca_paper",
                         "alpaca_order": order,
                         "final_qty": final_qty,
                         "entry_price": effective_entry,
@@ -625,7 +741,9 @@ class RiskCriticRunner:
                 )
             ).scalar_one_or_none()
             if existing is None:
+                ws_id = self._broker_cfg.workspace_id if self._broker_cfg else "default"
                 row = PaperTrade(
+                    workspace_id=ws_id,
                     thread_id=thread_id,
                     symbol=symbol.upper().strip(),
                     side=side.lower().strip(),

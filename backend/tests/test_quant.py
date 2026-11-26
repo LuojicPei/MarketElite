@@ -160,6 +160,10 @@ def test_technicals_rvol_quadrants_breadth_sectors_and_correlations() -> None:
     summary = analyze_asset_technicals(bars_up)
     assert summary["available"] is True
     assert float(summary["dist_200ma_pct"]) > 0.0
+    assert summary["ema_9"] is not None
+    assert summary["bollinger"] is not None and summary["bollinger"]["upper"] > summary["bollinger"]["lower"]
+    assert summary["macd"] is not None and "prev_histogram" in summary["macd"]
+    assert len(summary["sparkline_bars"]) == 18
 
     # Cross-asset correlations: identical up-move asset vs inverse asset
     spy_closes = [100.0 * (1.005**i) * (0.99 if i % 2 else 1.01) for i in range(70)]
@@ -238,3 +242,81 @@ def test_fear_greed_and_regime_classification_extremes() -> None:
         spy_net_gex=-3_000_000_000.0,
     )
     assert regime_off["regime_label"] == "RISK_OFF_STRESS"
+
+
+def test_compute_options_radar_max_pain_expected_move_skew_and_flow() -> None:
+    from app.quant.options import OptionContractInput, compute_options_radar
+
+    contracts = [
+        OptionContractInput(
+            contract_symbol="SPY261127C00715000",
+            option_type="call",
+            strike=715.0,
+            open_interest=12000,
+            volume=4500,
+            expiration_date="2026-11-27",
+            dte=3,
+            iv=0.22,
+            delta=0.50,
+            last_price=8.5,
+        ),
+        OptionContractInput(
+            contract_symbol="SPY261127P00715000",
+            option_type="put",
+            strike=715.0,
+            open_interest=11000,
+            volume=3800,
+            expiration_date="2026-11-27",
+            dte=3,
+            iv=0.22,
+            delta=-0.50,
+            last_price=8.2,
+        ),
+        OptionContractInput(
+            contract_symbol="SPY261127P00690000",
+            option_type="put",
+            strike=690.0,
+            open_interest=18000,
+            volume=24000,  # Vol > OI unusual flow
+            expiration_date="2026-11-27",
+            dte=3,
+            iv=0.28,
+            delta=-0.25,
+            last_price=2.4,
+        ),
+        OptionContractInput(
+            contract_symbol="SPY261127C00740000",
+            option_type="call",
+            strike=740.0,
+            open_interest=16000,
+            volume=2000,
+            expiration_date="2026-11-27",
+            dte=3,
+            iv=0.19,
+            delta=0.25,
+            last_price=1.8,
+        ),
+        OptionContractInput(
+            contract_symbol="SPY261218C00750000",
+            option_type="call",
+            strike=750.0,
+            open_interest=25000,
+            volume=1500,
+            expiration_date="2026-12-18",
+            dte=24,
+            iv=0.20,
+            delta=0.28,
+            last_price=3.6,
+        ),
+    ]
+
+    radar = compute_options_radar("SPY", 715.0, contracts, bucket="weekly")
+    assert radar["symbol"] == "SPY"
+    assert radar["bucket_counts"]["weekly"] == 4
+    assert radar["bucket_counts"]["monthly"] == 1
+    assert radar["max_pain"] == 715.0
+    assert radar["atm_iv_pct"] == 22.0
+    assert radar["expected_move_abs"] is not None and radar["expected_move_abs"] > 5.0
+    assert radar["iv_skew_25d"] == 9.0  # 28% Put IV - 19% Call IV
+    assert radar["unusual_flow"][0]["contract_symbol"] == "SPY261127P00690000"
+    assert radar["unusual_flow"][0]["vol_oi_ratio"] > 1.0

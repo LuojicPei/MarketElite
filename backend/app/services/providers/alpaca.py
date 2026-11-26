@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 from datetime import date, datetime, timedelta, timezone
 from typing import Any
@@ -195,14 +196,14 @@ class AlpacaClient:
         headers = self._headers()
         sym = symbol.upper().strip()
         today = date.today()
-        max_exp = today + timedelta(days=60)
+        max_exp = today + timedelta(days=45)
 
         async def _execute(client: httpx.AsyncClient) -> dict[str, Any]:
             # 1. Trading API /v2/options/contracts -> OCC open_interest + strike + type
             contracts_by_occ: dict[str, dict[str, Any]] = {}
             next_token: str | None = None
             pages = 0
-            while pages < 4:
+            while pages < 6:
                 params: dict[str, Any] = {
                     "underlying_symbols": sym,
                     "status": "active",
@@ -229,11 +230,11 @@ class AlpacaClient:
                 if not next_token:
                     break
 
-            # 2. Data API /v1beta1/options/snapshots/{symbol}?feed=indicative -> Greeks & IV
+            # 2. Data API /v1beta1/options/snapshots/{symbol}?feed=indicative -> Greeks, IV, Volume & Quotes
             snapshots: dict[str, dict[str, Any]] = {}
             snap_token: str | None = None
             snap_pages = 0
-            while snap_pages < 4:
+            while snap_pages < 6:
                 s_params: dict[str, Any] = {
                     "feed": "indicative",
                     "expiration_date_gte": today.isoformat(),
@@ -256,15 +257,31 @@ class AlpacaClient:
                 if not snap_token:
                     break
 
-            # 3. Underlying spot price (delayed snapshot or latest bar)
-            spot_resp = await client.get(
-                f"{self.DATA_BASE}/v2/stocks/{sym}/bars/latest",
+            # 3. Underlying spot price (delayed latest trade/bar snapshot)
+            spot_price = 0.0
+            snap_resp = await client.get(
+                f"{self.DATA_BASE}/v2/stocks/{sym}/snapshot",
                 headers=headers,
                 params={"feed": "iex"},
                 timeout=15.0,
             )
-            raise_for_provider_response(spot_resp, "alpaca")
-            spot_price = float(spot_resp.json().get("bar", {}).get("c", 0.0))
+            if snap_resp.status_code == 200:
+                s_data = snap_resp.json() or {}
+                spot_price = float(
+                    (s_data.get("latestTrade") or {}).get("p")
+                    or (s_data.get("dailyBar") or {}).get("c")
+                    or (s_data.get("prevDailyBar") or {}).get("c")
+                    or 0.0
+                )
+            if spot_price <= 0.0:
+                spot_resp = await client.get(
+                    f"{self.DATA_BASE}/v2/stocks/{sym}/bars/latest",
+                    headers=headers,
+                    params={"feed": "iex"},
+                    timeout=15.0,
+                )
+                raise_for_provider_response(spot_resp, "alpaca")
+                spot_price = float(spot_resp.json().get("bar", {}).get("c", 0.0))
 
             joined: list[dict[str, Any]] = []
             for occ, meta in contracts_by_occ.items():
@@ -273,17 +290,37 @@ class AlpacaClient:
                     oi = int(float(oi_raw)) if oi_raw is not None else 0
                 except (TypeError, ValueError):
                     oi = 0
-                if oi <= 0:
-                    continue
 
                 snap = snapshots.get(occ, {})
+                daily_bar = snap.get("dailyBar") or {}
+                prev_bar = snap.get("prevDailyBar") or {}
+                try:
+                    vol = int(float(daily_bar.get("v") or prev_bar.get("v") or 0))
+                except (TypeError, ValueError):
+                    vol = 0
+
+                if oi <= 0 and vol <= 0:
+                    continue
+
                 greeks = snap.get("greeks") or {}
+                quote = snap.get("latestQuote") or {}
+                trade = snap.get("latestTrade") or {}
+                bid = quote.get("bp")
+                ask = quote.get("ap")
+                mid_quote = (
+                    (float(bid) + float(ask)) / 2.0
+                    if bid is not None and ask is not None and float(ask) > 0
+                    else None
+                )
+                last_price = trade.get("p") or daily_bar.get("c") or mid_quote
+
                 exp_str = str(meta.get("expiration_date", ""))
+                days_to_exp: int | None = None
                 tte_years: float | None = None
                 if exp_str:
                     try:
-                        days_to_exp = max(1, (date.fromisoformat(exp_str) - today).days)
-                        tte_years = days_to_exp / 365.0
+                        days_to_exp = max(0, (date.fromisoformat(exp_str) - today).days)
+                        tte_years = max(1, days_to_exp) / 365.0
                     except ValueError:
                         tte_years = None
 
@@ -293,12 +330,19 @@ class AlpacaClient:
                         "option_type": str(meta.get("type", "")).lower(),
                         "strike": float(meta.get("strike_price", 0.0)),
                         "open_interest": oi,
+                        "volume": vol,
+                        "expiration_date": exp_str or None,
+                        "dte": days_to_exp,
                         "gamma": float(greeks["gamma"]) if greeks.get("gamma") is not None else None,
+                        "delta": float(greeks["delta"]) if greeks.get("delta") is not None else None,
+                        "theta": float(greeks["theta"]) if greeks.get("theta") is not None else None,
+                        "vega": float(greeks["vega"]) if greeks.get("vega") is not None else None,
                         "iv": (
                             float(snap["impliedVolatility"])
                             if snap.get("impliedVolatility") is not None
                             else None
                         ),
+                        "last_price": float(last_price) if last_price is not None else None,
                         "time_to_expiry_years": tte_years,
                     }
                 )
@@ -320,10 +364,10 @@ class AlpacaClient:
         *,
         force_refresh: bool = False,
     ) -> dict[str, Any]:
-        """Fetch joined Indicative Greeks + OCC Open Interest inputs for compute_estimated_gex."""
+        """Fetch joined Indicative Greeks + OCC Open Interest inputs for GEX & Options Radar."""
         self._headers()
         sym = symbol.upper().strip()
-        cache_key = f"marketelite:alpaca:optchain:{sym}"
+        cache_key = f"marketelite:alpaca:optchain:v2:{sym}"
         if self._cache is None:
             raw = await self._fetch_options_chain_raw(sym)
             contracts = [OptionContractInput(**c) for c in raw["contracts"]]
@@ -339,7 +383,7 @@ class AlpacaClient:
             cache_key,
             provider="alpaca_options",
             fetcher=lambda: self._fetch_options_chain_raw(sym),
-            soft_ttl_seconds=1200,
+            soft_ttl_seconds=600,
             hard_ttl_seconds=86400 * 2,
             force_refresh=force_refresh,
         )
@@ -354,6 +398,76 @@ class AlpacaClient:
             "fetched_at": res.fetched_at,
             "source": "alpaca_indicative",
         }
+
+    async def get_batch_stock_snapshots(
+        self,
+        symbols: list[str],
+        *,
+        force_refresh: bool = False,
+    ) -> dict[str, Any]:
+        """Fetch latest daily/intraday price & 1D change snapshots for up to 100 tickers via IEX."""
+        headers = self._headers()
+        normalized = sorted({s.upper().strip() for s in symbols if s.strip()})
+        if not normalized:
+            return {}
+        sig_hash = hashlib.sha256(",".join(normalized).encode("utf-8")).hexdigest()[:12]
+        cache_key = f"marketelite:alpaca:snapshots:{len(normalized)}:{sig_hash}"
+
+        async def _fetch_all() -> dict[str, dict[str, Any]]:
+            async def _execute(client: httpx.AsyncClient) -> dict[str, dict[str, Any]]:
+                out: dict[str, dict[str, Any]] = {}
+                chunks = [normalized[i : i + 45] for i in range(0, len(normalized), 45)]
+                tasks = [
+                    client.get(
+                        f"{self.DATA_BASE}/v2/stocks/snapshots",
+                        headers=headers,
+                        params={"symbols": ",".join(chunk), "feed": "iex"},
+                        timeout=18.0,
+                    )
+                    for chunk in chunks
+                ]
+                responses = await asyncio.gather(*tasks)
+                for resp in responses:
+                    raise_for_provider_response(resp, "alpaca_snapshots")
+                    body = resp.json() or {}
+                    for sym, snap in body.items():
+                        daily = snap.get("dailyBar") or {}
+                        prev = snap.get("prevDailyBar") or {}
+                        trade = snap.get("latestTrade") or {}
+                        curr_price = trade.get("p") or daily.get("c") or prev.get("c")
+                        prev_close = prev.get("c")
+                        chg_pct: float | None = None
+                        if curr_price is not None and prev_close and float(prev_close) > 0:
+                            chg_pct = round(
+                                ((float(curr_price) - float(prev_close)) / float(prev_close)) * 100.0,
+                                2,
+                            )
+                        out[sym] = {
+                            "price": round(float(curr_price), 2) if curr_price is not None else None,
+                            "prev_close": round(float(prev_close), 2) if prev_close is not None else None,
+                            "change_1d_pct": chg_pct,
+                            "volume": int(float(daily.get("v") or prev.get("v") or 0)),
+                            "bar_date": str(daily.get("t") or prev.get("t") or "")[:10] or None,
+                        }
+                return out
+
+            if self._http_client is not None:
+                return await _execute(self._http_client)
+            async with httpx.AsyncClient() as client:
+                return await _execute(client)
+
+        if self._cache is None:
+            return await _fetch_all()
+
+        res = await self._cache.get_or_fetch(
+            cache_key,
+            provider="alpaca_snapshots",
+            fetcher=_fetch_all,
+            soft_ttl_seconds=120,
+            hard_ttl_seconds=86400,
+            force_refresh=force_refresh,
+        )
+        return res.data if isinstance(res.data, dict) else {}
 
     async def get_news(self, symbols: list[str], limit: int = 10) -> list[dict[str, Any]]:
         """Fetch recent Alpaca news headlines for requested US symbols."""

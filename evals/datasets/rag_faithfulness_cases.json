@@ -1,0 +1,168 @@
+[
+  {
+    "id": "RAG-F01",
+    "track": "track2",
+    "category": "hybrid_retrieval_rrf",
+    "name": "Exact SKU & Note Citation Rescue via RRF (Vector miss + BM25 #1)",
+    "evaluator": "rag_rrf_mrr",
+    "input": {
+      "query": "NVDA Note 14 export controls H20 restrictions gross margin impact",
+      "vector_chunks": [
+        {"chunk_id": 101, "symbol": "NVDA", "chunk_index": 2, "form_type": "10-K", "filing_date": "2026-02-26", "section_title": "Item 7. MD&A", "content": "Data Center revenue expanded primarily driven by Hopper and Blackwell GPU platform ramp."},
+        {"chunk_id": 102, "symbol": "NVDA", "chunk_index": 5, "form_type": "10-Q", "filing_date": "2026-08-26", "section_title": "Item 2. Liquidity", "content": "Cash, cash equivalents and marketable securities totaled $38.5 billion at quarter end."},
+        {"chunk_id": 103, "symbol": "NVDA", "chunk_index": 3, "form_type": "10-K", "filing_date": "2026-02-26", "section_title": "Item 1. Business", "content": "Our compute platforms accelerate AI training and inference workloads across hyperscalers."}
+      ],
+      "lexical_chunks": [
+        {"chunk_id": 104, "symbol": "NVDA", "chunk_index": 8, "form_type": "10-Q", "filing_date": "2026-08-26", "section_title": "Note 14 - Export Controls", "content": "New U.S. government licensing requirements on H20 shipments resulted in a $4.5 billion inventory charge and lower gross margin."},
+        {"chunk_id": 101, "symbol": "NVDA", "chunk_index": 2, "form_type": "10-K", "filing_date": "2026-02-26", "section_title": "Item 7. MD&A", "content": "Data Center revenue expanded primarily driven by Hopper and Blackwell GPU platform ramp."}
+      ]
+    },
+    "expected": {
+      "relevant_ids": [104],
+      "min_recall_at_3": 1.0,
+      "min_mrr": 0.5
+    }
+  },
+  {
+    "id": "RAG-F02",
+    "track": "track2",
+    "category": "hybrid_retrieval_rrf",
+    "name": "Dual-Channel Consensus Ranking (Vector #2 + BM25 #1 -> Top 1)",
+    "evaluator": "rag_rrf_mrr",
+    "input": {
+      "query": "AMD EPYC Data Center segment operating income Q3 2026",
+      "vector_chunks": [
+        {"chunk_id": 201, "symbol": "AMD", "chunk_index": 2, "form_type": "10-Q", "filing_date": "2026-11-04", "section_title": "Item 1. Notes", "content": "Client segment revenue grew on Ryzen AI processor demand."},
+        {"chunk_id": 202, "symbol": "AMD", "chunk_index": 6, "form_type": "10-Q", "filing_date": "2026-11-04", "section_title": "Segment Reporting", "content": "Data Center segment revenue reached $3.5B with $1.04B operating income led by EPYC Turin and Instinct MI300X."},
+        {"chunk_id": 203, "symbol": "AMD", "chunk_index": 9, "form_type": "10-K", "filing_date": "2026-02-05", "section_title": "Item 7. MD&A", "content": "Embedded segment faced inventory normalization headwinds."}
+      ],
+      "lexical_chunks": [
+        {"chunk_id": 202, "symbol": "AMD", "chunk_index": 6, "form_type": "10-Q", "filing_date": "2026-11-04", "section_title": "Segment Reporting", "content": "Data Center segment revenue reached $3.5B with $1.04B operating income led by EPYC Turin and Instinct MI300X."},
+        {"chunk_id": 201, "symbol": "AMD", "chunk_index": 2, "form_type": "10-Q", "filing_date": "2026-11-04", "section_title": "Item 1. Notes", "content": "Client segment revenue grew on Ryzen AI processor demand."}
+      ]
+    },
+    "expected": {
+      "relevant_ids": [202],
+      "require_top1": 202,
+      "min_recall_at_3": 1.0,
+      "min_mrr": 1.0
+    }
+  },
+  {
+    "id": "RAG-F03",
+    "track": "track2",
+    "category": "hybrid_retrieval_rrf",
+    "name": "Services Margin vs Hardware Margin Disambiguation",
+    "evaluator": "rag_rrf_mrr",
+    "input": {
+      "query": "AAPL Services gross margin percentage vs Products gross margin",
+      "vector_chunks": [
+        {"chunk_id": 301, "symbol": "AAPL", "chunk_index": 3, "form_type": "10-K", "filing_date": "2026-11-01", "section_title": "Products Performance", "content": "Products gross margin was 36.8% driven by unfavorable foreign exchange."},
+        {"chunk_id": 302, "symbol": "AAPL", "chunk_index": 4, "form_type": "10-K", "filing_date": "2026-11-01", "section_title": "Services Performance", "content": "Services gross margin expanded to 74.1% driven by App Store, advertising and cloud mix shift."}
+      ],
+      "lexical_chunks": [
+        {"chunk_id": 302, "symbol": "AAPL", "chunk_index": 4, "form_type": "10-K", "filing_date": "2026-11-01", "section_title": "Services Performance", "content": "Services gross margin expanded to 74.1% driven by App Store, advertising and cloud mix shift."}
+      ]
+    },
+    "expected": {
+      "relevant_ids": [302],
+      "require_top1": 302,
+      "min_recall_at_3": 1.0,
+      "min_mrr": 1.0
+    }
+  },
+  {
+    "id": "RAG-F04",
+    "track": "track2",
+    "category": "hybrid_retrieval_rrf",
+    "name": "Multi-Document Debt Maturity Covenant Retrieval",
+    "evaluator": "rag_rrf_mrr",
+    "input": {
+      "query": "senior notes maturity schedule 2027 2028 revolving credit facility",
+      "vector_chunks": [
+        {"chunk_id": 401, "symbol": "MSFT", "chunk_index": 2, "form_type": "10-Q", "filing_date": "2026-08-05", "section_title": "Share Repurchase", "content": "During the quarter, the Company repurchased $1.2B of common stock."},
+        {"chunk_id": 402, "symbol": "MSFT", "chunk_index": 7, "form_type": "10-K", "filing_date": "2026-02-20", "section_title": "Note 8 - Debt", "content": "Senior notes due 2027 carry a 3.85% coupon with $1.5B principal outstanding and $2.0B undrawn revolver."},
+        {"chunk_id": 403, "symbol": "MSFT", "chunk_index": 9, "form_type": "10-K", "filing_date": "2026-02-20", "section_title": "Risk Factors", "content": "Rising interest rates may increase refinancing costs for future debt issuances."}
+      ],
+      "lexical_chunks": [
+        {"chunk_id": 402, "symbol": "MSFT", "chunk_index": 7, "form_type": "10-K", "filing_date": "2026-02-20", "section_title": "Note 8 - Debt", "content": "Senior notes due 2027 carry a 3.85% coupon with $1.5B principal outstanding and $2.0B undrawn revolver."},
+        {"chunk_id": 403, "symbol": "MSFT", "chunk_index": 9, "form_type": "10-K", "filing_date": "2026-02-20", "section_title": "Risk Factors", "content": "Rising interest rates may increase refinancing costs for future debt issuances."}
+      ]
+    },
+    "expected": {
+      "relevant_ids": [402],
+      "require_top1": 402,
+      "min_recall_at_3": 1.0,
+      "min_mrr": 1.0
+    }
+  },
+  {
+    "id": "RAG-F05",
+    "track": "track2",
+    "category": "citation_faithfulness",
+    "name": "Numeric & Citation Groundedness Verifier (Supported SEC Claim)",
+    "evaluator": "rag_faithfulness_check",
+    "input": {
+      "context_passages": [
+        "[10-Q 2026-08-26 · Note 14] Export licensing restrictions on H20 shipments resulted in a $4.5 billion inventory charge, compressing GAAP gross margin from 75.1% to 61.0%."
+      ],
+      "candidate_response": "根据 [10-Q 2026-08-26 · Note 14]，H20 出口许可限制导致公司计提 $4.5 billion 库存减记，GAAP 毛利率从 75.1% 压缩至 61.0%。",
+      "expect_refusal": false
+    },
+    "expected": {
+      "must_have_citation": true,
+      "max_ungrounded_numbers": 0,
+      "min_faithfulness_score": 0.9
+    }
+  },
+  {
+    "id": "RAG-F06",
+    "track": "track2",
+    "category": "citation_faithfulness",
+    "name": "Numeric Hallucination Catcher (Invented Revenue $99.9B Must Fail Violation Check)",
+    "evaluator": "rag_faithfulness_check",
+    "input": {
+      "context_passages": [
+        "[10-K 2026-02-26 · Item 7] Total Data Center revenue reached $47.5 billion with operating margin of 62.4%."
+      ],
+      "candidate_response": "根据 [10-K 2026-02-26 · Item 7]，Data Center 营收达到 $47.5 billion，预计下季度将飙升至 $99.9 billion 且毛利率达 88.2%。",
+      "expect_numeric_drift_detected": true,
+      "expect_refusal": false
+    },
+    "expected": {
+      "detected_ungrounded_numbers_at_least": 2
+    }
+  },
+  {
+    "id": "RAG-F07",
+    "track": "track2",
+    "category": "citation_faithfulness",
+    "name": "Abstention Integrity under Insufficient SEC Context (Missing Q4 Guidance)",
+    "evaluator": "rag_faithfulness_check",
+    "input": {
+      "context_passages": [
+        "[10-Q 2026-08-26 · Risk Factors] Supply chain concentration in advanced CoWoS packaging may constrain near-term shipments."
+      ],
+      "candidate_response": "已检索到的 SEC 片段（[10-Q 2026-08-26 · Risk Factors]）仅提及 CoWoS 先进封装供应链集中度风险，未披露 Q4 具体营收或 EPS 指引，资料不足无法给出精确数值。",
+      "expect_refusal": true
+    },
+    "expected": {
+      "abstention_verified": true,
+      "max_ungrounded_numbers": 0
+    }
+  },
+  {
+    "id": "RAG-F08",
+    "track": "track2",
+    "category": "live_sec_corpus",
+    "name": "Live PG SecFilingChunk Retrieval Probe (Zero-Crash & Valid Metadata)",
+    "evaluator": "rag_live_corpus_probe",
+    "input": {
+      "candidate_symbols": ["AMD", "NVDA", "AAPL"],
+      "query": "gross margin risk factors data center liquidity"
+    },
+    "expected": {
+      "min_faithfulness_score": 0.8
+    }
+  }
+]

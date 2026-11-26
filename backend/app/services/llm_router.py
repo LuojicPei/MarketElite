@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import ipaddress
 import logging
-from collections.abc import Sequence
+import time
+from collections.abc import Mapping, Sequence
 from urllib.parse import urlparse
 
 import httpx
-from langchain_core.messages import BaseMessage, SystemMessage
+from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 
 from app.core.config import Settings
@@ -153,3 +155,197 @@ async def embed_texts(
     except (httpx.HTTPError, KeyError, TypeError, ValueError) as exc:
         logger.warning("Embedding generation error (%s); lexical BM25 remains active", exc)
         return None
+
+
+_BLOCKED_METADATA_HOSTS = {
+    "metadata.google.internal",
+    "metadata.goog",
+    "169.254.169.254",
+    "100.100.100.200",
+}
+
+
+def validate_llm_base_url(raw_url: str, *, app_env: str = "development") -> str:
+    """Validate OpenAI-compatible Base URL against SSRF and invalid schemes."""
+    cleaned = raw_url.strip()
+    parsed = urlparse(cleaned)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise ValueError("API Base URL 必须以 https:// 或 http:// 开头并包含有效域名。")
+
+    host = (parsed.hostname or "").strip().lower()
+    if not host or host in _BLOCKED_METADATA_HOSTS:
+        raise ValueError("不允许访问内网元数据地址。")
+
+    if app_env.lower() == "production" and parsed.scheme != "https":
+        raise ValueError("生产环境仅允许 HTTPS 协议的模型接口地址。")
+
+    try:
+        ip_obj = ipaddress.ip_address(host)
+    except ValueError:
+        ip_obj = None
+
+    if ip_obj is not None:
+        if ip_obj.is_link_local or ip_obj.is_multicast or ip_obj.is_unspecified:
+            raise ValueError("不允许使用保留网段或链路本地 IP 作为接口地址。")
+        if app_env.lower() == "production" and (ip_obj.is_private or ip_obj.is_loopback):
+            raise ValueError("生产环境禁止指向内网或本机回环地址。")
+    elif app_env.lower() == "production" and host in {"localhost", "host.docker.internal"}:
+        raise ValueError("生产环境禁止使用 localhost 作为上游模型地址。")
+
+    return cleaned
+
+
+def resolve_llm_settings(
+    base_settings: Settings, headers: Mapping[str, str]
+) -> tuple[Settings, str]:
+    """Resolve ephemeral per-request Settings supporting browser-local BYOK headers.
+
+    Returns ``(effective_settings, key_source)`` where ``key_source`` is one of:
+    - ``"byok"``: caller supplied own API key via ``X-LLM-Api-Key`` header
+    - ``"server"``: ``allow_server_llm_fallback=True`` and server ``.env`` key configured
+    - ``"none"``: no API key active for this request (public visitors stay isolated)
+    """
+    norm = {k.lower(): v.strip() for k, v in headers.items() if isinstance(v, str)}
+    user_key = norm.get("x-llm-api-key", "")
+    user_fast_key = norm.get("x-llm-fast-api-key", "") or user_key
+    user_base_url = norm.get("x-llm-base-url", "")
+    user_pro_model = norm.get("x-llm-pro-model", "")
+    user_fast_model = norm.get("x-llm-fast-model", "")
+
+    if user_key:
+        updates: dict[str, str] = {
+            "llm_pro_api_key": user_key,
+            "llm_fast_api_key": user_fast_key,
+        }
+        if user_base_url:
+            validated_url = validate_llm_base_url(user_base_url, app_env=base_settings.app_env)
+            updates["llm_pro_base_url"] = validated_url
+            updates["llm_fast_base_url"] = validated_url
+        if user_pro_model:
+            updates["llm_pro_model"] = user_pro_model
+        if user_fast_model:
+            updates["llm_fast_model"] = user_fast_model
+        elif user_pro_model:
+            updates["llm_fast_model"] = user_pro_model
+        return base_settings.model_copy(update=updates), "byok"
+
+    has_server_key = bool(
+        base_settings.llm_pro_api_key.strip() or base_settings.llm_fast_api_key.strip()
+    )
+    if base_settings.allow_server_llm_fallback and has_server_key:
+        return base_settings, "server"
+
+    redacted_updates: dict[str, str] = {
+        "llm_pro_api_key": "",
+        "llm_fast_api_key": "",
+        "llm_embedding_api_key": "",
+    }
+    return base_settings.model_copy(update=redacted_updates), "none"
+
+
+async def test_llm_connection(
+    *,
+    api_key: str,
+    base_url: str,
+    model: str,
+    app_env: str = "development",
+) -> dict[str, object]:
+    """Send a minimal probe request to validate a user-supplied OpenAI-compatible API config."""
+    clean_key = api_key.strip()
+    clean_model = model.strip()
+    if not clean_key:
+        raise ValueError("请输入 API Key 后再测试连接。")
+    if not clean_model:
+        raise ValueError("请指定要测试的模型名称（Model ID）。")
+
+    validated_url = validate_llm_base_url(base_url, app_env=app_env)
+    client = ChatOpenAI(
+        model=clean_model,
+        api_key=clean_key,
+        base_url=validated_url,
+        temperature=0.0,
+        max_tokens=256,
+        timeout=20.0,
+        max_retries=0,
+    )
+    started = time.perf_counter()
+    reply = await client.ainvoke([HumanMessage(content="只回复 OK 两个字母")])
+    elapsed_ms = int((time.perf_counter() - started) * 1000)
+    raw_content = reply.content if isinstance(reply.content, str) else str(reply.content)
+    return {
+        "ok": True,
+        "latency_ms": elapsed_ms,
+        "model": clean_model,
+        "base_url": validated_url,
+        "reply_preview": raw_content.strip()[:60] or "已握手成功",
+    }
+
+
+_NON_CHAT_MODEL_MARKERS = (
+    "embedding",
+    "text-embedding",
+    "tts-",
+    "-tts",
+    "whisper",
+    "dall-e",
+    "imagen",
+    "moderation",
+    "aqa",
+    "babbage",
+    "davinci",
+    "realtime-audio",
+)
+
+
+async def fetch_available_models(
+    *,
+    api_key: str,
+    base_url: str,
+    app_env: str = "development",
+) -> list[dict[str, str]]:
+    """Query OpenAI-compatible GET /models using caller's BYOK key & return chat-capable IDs."""
+    clean_key = api_key.strip()
+    if not clean_key:
+        raise ValueError("请先输入 API Key 后再拉取可用模型列表。")
+
+    validated_url = validate_llm_base_url(base_url, app_env=app_env)
+    endpoint = f"{validated_url.rstrip('/')}/models"
+    headers = {
+        "Authorization": f"Bearer {clean_key}",
+        "Accept": "application/json",
+    }
+
+    async with httpx.AsyncClient(follow_redirects=True) as client:
+        resp = await client.get(endpoint, headers=headers, timeout=15.0)
+        resp.raise_for_status()
+        payload = resp.json()
+
+    raw_items = payload.get("data", []) if isinstance(payload, dict) else []
+    if not isinstance(raw_items, list):
+        return []
+
+    seen: set[str] = set()
+    models: list[dict[str, str]] = []
+    for item in raw_items:
+        if not isinstance(item, dict):
+            continue
+        raw_id = str(item.get("id", "")).strip()
+        if not raw_id:
+            continue
+        clean_id = raw_id.removeprefix("models/")
+        low = clean_id.lower()
+        if any(marker in low for marker in _NON_CHAT_MODEL_MARKERS):
+            continue
+        if clean_id in seen:
+            continue
+        seen.add(clean_id)
+        models.append(
+            {
+                "id": clean_id,
+                "owned_by": str(item.get("owned_by", "") or ""),
+                "name": str(item.get("name", "") or clean_id),
+            }
+        )
+
+    models.sort(key=lambda m: m["id"].lower())
+    return models[:250]

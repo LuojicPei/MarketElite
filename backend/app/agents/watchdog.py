@@ -151,8 +151,10 @@ class EpisodicMemoryRetriever:
         symbol: str | None = None,
         regime_label: str | None = None,
         top_k: int = 3,
+        workspace_id: str = "default",
     ) -> list[dict[str, Any]]:
         """Retrieve relevant historical trade & regime lessons safely even without Embedding API."""
+        ws_id = workspace_id or "default"
         sym = symbol.upper().strip() if symbol else None
         reg = regime_label.upper().strip() if regime_label else None
         search_seed = " ".join(part for part in (sym or "", reg or "", query or "") if part).strip()
@@ -168,13 +170,17 @@ class EpisodicMemoryRetriever:
 
         fused: dict[int, dict[str, Any]] = {}
         async with self._session_factory() as session:
-            # 1. PostgreSQL BM25 full-text search
+            # 1. PostgreSQL BM25 full-text search (active rules scoped to workspace)
             if search_seed:
                 ts_q = func.websearch_to_tsquery("english", search_seed)
                 lex_rank = func.ts_rank_cd(EpisodicMemory.search_tsv, ts_q, 32).label("lex_score")
                 lex_stmt = (
                     select(EpisodicMemory, lex_rank)
-                    .where(EpisodicMemory.search_tsv.op("@@")(ts_q))
+                    .where(
+                        EpisodicMemory.workspace_id == ws_id,
+                        EpisodicMemory.is_active.is_(True),
+                        EpisodicMemory.search_tsv.op("@@")(ts_q),
+                    )
                     .order_by(lex_rank.desc())
                     .limit(12)
                 )
@@ -188,7 +194,11 @@ class EpisodicMemoryRetriever:
                         )
                         or_stmt = (
                             select(EpisodicMemory, or_rank)
-                            .where(EpisodicMemory.search_tsv.op("@@")(or_q))
+                            .where(
+                                EpisodicMemory.workspace_id == ws_id,
+                                EpisodicMemory.is_active.is_(True),
+                                EpisodicMemory.search_tsv.op("@@")(or_q),
+                            )
                             .order_by(or_rank.desc())
                             .limit(12)
                         )
@@ -211,7 +221,11 @@ class EpisodicMemoryRetriever:
                 dist_expr = EpisodicMemory.embedding.cosine_distance(query_vec).label("vec_dist")
                 vec_stmt = (
                     select(EpisodicMemory, dist_expr)
-                    .where(EpisodicMemory.embedding.is_not(None))
+                    .where(
+                        EpisodicMemory.workspace_id == ws_id,
+                        EpisodicMemory.is_active.is_(True),
+                        EpisodicMemory.embedding.is_not(None),
+                    )
                     .order_by(dist_expr)
                     .limit(10)
                 )
@@ -222,17 +236,27 @@ class EpisodicMemoryRetriever:
                     entry = fused.setdefault(mid, {"row": mem, "score": 0.0})
                     entry["score"] += 1.0 / (60 + rank_idx)
 
-            # 3. Direct symbol / regime / recent fallback so Chinese queries still match symbol+regime memories
-            recent_stmt = select(EpisodicMemory).order_by(desc(EpisodicMemory.created_at)).limit(20)
+            # 3. Direct symbol / regime / pinned Playbook rules fallback & prioritization
+            recent_stmt = (
+                select(EpisodicMemory)
+                .where(
+                    EpisodicMemory.workspace_id == ws_id,
+                    EpisodicMemory.is_active.is_(True),
+                )
+                .order_by(desc(EpisodicMemory.is_pinned), desc(EpisodicMemory.created_at))
+                .limit(24)
+            )
             for mem in (await session.execute(recent_stmt)).scalars().all():
                 mid = int(mem.id)
                 boost = 0.0
+                if bool(getattr(mem, "is_pinned", False)):
+                    boost += 0.08
                 if sym and mem.symbol.upper() == sym:
                     boost += 0.02
                 if reg and mem.regime_label.upper() == reg:
                     boost += 0.015
                 if mem.quadrant_outcome.startswith("BAD_PROCESS"):
-                    boost += 0.005  # prioritize mistake lessons slightly higher
+                    boost += 0.005
                 if mid in fused or boost > 0.0:
                     entry = fused.setdefault(mid, {"row": mem, "score": 0.001})
                     entry["score"] += boost
@@ -249,6 +273,8 @@ class EpisodicMemoryRetriever:
                 "lesson_text": item["row"].lesson_text,
                 "tags": item["row"].tags_json or [],
                 "alpha_vs_spy_pct": item["row"].alpha_vs_spy_pct,
+                "is_pinned": bool(getattr(item["row"], "is_pinned", False)),
+                "is_active": bool(getattr(item["row"], "is_active", True)),
                 "score": round(float(item["score"]), 5),
                 "created_at": item["row"].created_at.isoformat(),
             }
@@ -259,15 +285,16 @@ class EpisodicMemoryRetriever:
     def format_memories_for_prompt(memories: list[dict[str, Any]]) -> str:
         if not memories:
             return ""
-        lines = ["Historical Episodic Lessons (Post-Trade Attribution):"]
+        lines = ["Historical Episodic Lessons & Active Playbook Rules:"]
         for m in memories:
             alpha = (
                 f", Alpha={m['alpha_vs_spy_pct']:+.2f}% vs SPY"
                 if m.get("alpha_vs_spy_pct") is not None
                 else ""
             )
+            pin_prefix = "[PINNED IRON RULE] " if m.get("is_pinned") else ""
             lines.append(
-                f"- [{m['symbol']} | {m['regime_label']} | {m['quadrant_outcome']}{alpha}] "
+                f"- {pin_prefix}[{m['symbol']} | {m['regime_label']} | {m['quadrant_outcome']}{alpha}] "
                 f"{m['title']}: {m['lesson_text'][:220]}"
             )
         return "\n".join(lines)
@@ -279,6 +306,7 @@ async def run_watchdog_scan(
     *,
     symbols: list[str] | None = None,
     use_fast_llm: bool = True,
+    workspace_id: str = "default",
 ) -> dict[str, Any]:
     """Scan local market bars, GEX walls, VIX term structure & upcoming catalysts for anomalies."""
     now = datetime.now(timezone.utc)
@@ -333,7 +361,8 @@ async def run_watchdog_scan(
             (
                 await session.execute(
                     select(PaperTrade.symbol).where(
-                        PaperTrade.status.in_(["submitted", "filled", "accepted", "pending_hitl"])
+                        PaperTrade.workspace_id == workspace_id,
+                        PaperTrade.status.in_(["submitted", "filled", "accepted", "pending_hitl"]),
                     )
                 )
             )
@@ -511,6 +540,8 @@ async def run_watchdog_scan(
                 logger.info("Watchdog using deterministic alert copy: %s", exc)
 
         if candidates_to_upsert:
+            for item in candidates_to_upsert:
+                item.setdefault("workspace_id", workspace_id)
             stmt = pg_insert(WatchdogAlert).values(candidates_to_upsert)
             stmt = stmt.on_conflict_do_update(
                 constraint="uq_watchdog_alert_key",
@@ -659,6 +690,7 @@ async def reflect_on_trade(
         ).scalar_one_or_none()
         if existing_mem is None:
             memory = EpisodicMemory(
+                workspace_id=(getattr(trade, "workspace_id", None) or "default"),
                 paper_trade_id=trade.id,
                 symbol=trade.symbol.upper(),
                 regime_label=(trade.regime_at_entry or "UNKNOWN").upper(),
@@ -696,3 +728,246 @@ async def reflect_on_trade(
             "lessons_markdown": review.lessons_markdown,
             "created_at": review.created_at.isoformat(),
         }
+
+
+async def reflect_portfolio_postmortem(
+    session_factory: async_sessionmaker[AsyncSession],
+    settings: Settings,
+    *,
+    use_fast_llm: bool = True,
+    lookback_limit: int = 30,
+    workspace_id: str = "default",
+) -> dict[str, Any]:
+    """Multi-trade Portfolio Post-Mortem Agent synthesizing regime attribution & candidate Playbook rules."""
+    ws_id = workspace_id or "default"
+    async with session_factory() as session:
+        trades = list(
+            (
+                await session.execute(
+                    select(PaperTrade)
+                    .where(PaperTrade.workspace_id == ws_id)
+                    .order_by(desc(PaperTrade.created_at))
+                    .limit(lookback_limit)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        alerts = list(
+            (
+                await session.execute(
+                    select(WatchdogAlert)
+                    .where(WatchdogAlert.workspace_id == ws_id)
+                    .order_by(desc(WatchdogAlert.created_at))
+                    .limit(12)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        pinned_rules = list(
+            (
+                await session.execute(
+                    select(EpisodicMemory)
+                    .where(
+                        EpisodicMemory.workspace_id == ws_id,
+                        EpisodicMemory.is_active.is_(True),
+                        EpisodicMemory.is_pinned.is_(True),
+                    )
+                    .order_by(desc(EpisodicMemory.created_at))
+                    .limit(8)
+                )
+            )
+            .scalars()
+            .all()
+        )
+
+    closed_trades = [t for t in trades if t.status == "closed"]
+    regime_stats: dict[str, dict[str, Any]] = {}
+    failure_counts: dict[str, int] = {
+        "COUNTER_REGIME_LONG": 0,
+        "BUDGET_BREACH": 0,
+        "MISSING_STOP_LOSS": 0,
+        "STOPPED_OUT_DISCIPLINED": 0,
+    }
+    sym_pnl: dict[str, float] = {}
+    scores: list[int] = []
+
+    for t in closed_trades:
+        reg = (t.regime_at_entry or "UNKNOWN").upper()
+        attr = classify_trade_quadrant(
+            side=t.side,
+            qty=float(t.qty),
+            entry_price=t.entry_price,
+            stop_loss_price=t.stop_loss_price,
+            take_profit_price=t.take_profit_price,
+            risk_budget_pct=float(t.risk_budget_pct),
+            realized_pnl=t.realized_pnl,
+            spy_benchmark_return_pct=t.spy_benchmark_return_pct,
+            regime_at_entry=t.regime_at_entry,
+        )
+        pnl = float(t.realized_pnl or 0.0)
+        p_score = int(attr["process_score"])
+        scores.append(p_score)
+        sym_pnl[t.symbol] = round(sym_pnl.get(t.symbol, 0.0) + pnl, 2)
+
+        slot = regime_stats.setdefault(
+            reg,
+            {"regime_label": reg, "trades": 0, "wins": 0, "net_pnl": 0.0, "scores": []},
+        )
+        slot["trades"] += 1
+        if pnl > 0:
+            slot["wins"] += 1
+        slot["net_pnl"] = round(slot["net_pnl"] + pnl, 2)
+        slot["scores"].append(p_score)
+
+        if reg in ("RISK_OFF_STRESS", "LIQUIDITY_TIGHTENING") and t.side.lower() == "buy" and pnl <= 0:
+            failure_counts["COUNTER_REGIME_LONG"] += 1
+        if float(t.risk_budget_pct) > 1.05:
+            failure_counts["BUDGET_BREACH"] += 1
+        if t.stop_loss_price is None or float(t.stop_loss_price) <= 0:
+            failure_counts["MISSING_STOP_LOSS"] += 1
+        if attr["quadrant"] == "GOOD_PROCESS_BAD_OUTCOME":
+            failure_counts["STOPPED_OUT_DISCIPLINED"] += 1
+
+    regime_breakdown: list[dict[str, Any]] = []
+    for reg, data in sorted(regime_stats.items(), key=lambda kv: kv[1]["trades"], reverse=True):
+        sc_list = data["scores"]
+        regime_breakdown.append(
+            {
+                "regime_label": reg,
+                "trades": data["trades"],
+                "win_rate_pct": round((data["wins"] / max(1, data["trades"])) * 100.0, 1),
+                "net_pnl": data["net_pnl"],
+                "avg_process_score": round(sum(sc_list) / len(sc_list), 1) if sc_list else 0.0,
+            }
+        )
+
+    failure_patterns: list[str] = []
+    recommended_rules: list[dict[str, Any]] = []
+
+    if failure_counts["COUNTER_REGIME_LONG"] > 0:
+        failure_patterns.append(
+            f"逆宏观体制做多失分（{failure_counts['COUNTER_REGIME_LONG']} 笔）：在 RISK_OFF_STRESS / 流动性收紧窗口逆势做多未能取得正收益。"
+        )
+        recommended_rules.append(
+            {
+                "symbol": "ALL",
+                "regime_label": "RISK_OFF_STRESS",
+                "title": "逆风 Regime 强制减半预算铁律",
+                "lesson_text": "当宏观 Regime 处于 RISK_OFF_STRESS 或 LIQUIDITY_TIGHTENING 时，所有顺周期做多提案风险预算上限强制下调至 0.5%，严禁追高突破。",
+            }
+        )
+    if failure_counts["MISSING_STOP_LOSS"] > 0 or failure_counts["BUDGET_BREACH"] > 0:
+        failure_patterns.append(
+            f"风控边界执行缺口：发现 {failure_counts['MISSING_STOP_LOSS']} 笔无预设止损、{failure_counts['BUDGET_BREACH']} 笔突破 1% 预算。"
+        )
+        recommended_rules.append(
+            {
+                "symbol": "ALL",
+                "regime_label": "HIGH_VOL_TRANSITION",
+                "title": "硬性 Bracket 止损与 1% 红线",
+                "lesson_text": "任何开仓单必须携带确定性止损 SL 与至少 1.8x 盈亏比目标 TP，单笔风险敞口严格锁定 <= 1.0% 净值。",
+            }
+        )
+    if not failure_patterns:
+        if closed_trades:
+            failure_patterns.append(
+                f"最近 {len(closed_trades)} 笔已结算交易纪律表现稳健（平均纪律分 {round(sum(scores) / len(scores), 1) if scores else 90}/100），未见违纪重仓扛单。"
+            )
+        else:
+            failure_patterns.append(
+                "当前已结算交易记录尚少（示例推演基线已激活），建议继续通过 Sandbox 演练或同步 Trading212 历史订单积累统计样本。"
+            )
+
+    # Always provide a high-value Watchdog-aware rule if high alerts exist
+    high_alerts = [a for a in alerts if str(a.severity).lower() == "high"]
+    if high_alerts:
+        top_sym = high_alerts[0].symbol or "SPY"
+        recommended_rules.append(
+            {
+                "symbol": top_sym,
+                "regime_label": high_alerts[0].regime_label or "HIGH_VOL_TRANSITION",
+                "title": f"{top_sym} 负伽马 / 异动预警前置防守规则",
+                "lesson_text": f"当 Watchdog 对 {top_sym} 触发「{high_alerts[0].title[:60]}」类高危警报时，禁止同向盲目加仓，优先运行红蓝对抗评估减半仓或移至保本止损。",
+            }
+        )
+
+    if len(recommended_rules) < 2:
+        recommended_rules.append(
+            {
+                "symbol": "SPY",
+                "regime_label": "GOLDILOCKS_EXPANSION",
+                "title": "财报前 48h 隐波与仓位隔离规则",
+                "lesson_text": "标的临近季报窗口时，将隐含波动率跳空纳入止损宽容度；未经 Risk Critic 复核严禁满仓过夜赌财报。",
+            }
+        )
+
+    avg_score = round(sum(scores) / len(scores), 1) if scores else None
+    total_net = round(sum(float(t.realized_pnl or 0.0) for t in closed_trades), 2)
+    worst_sym = min(sym_pnl.items(), key=lambda kv: kv[1]) if sym_pnl else None
+    best_sym = max(sym_pnl.items(), key=lambda kv: kv[1]) if sym_pnl else None
+
+    fallback_md_lines = [
+        f"### AI 周期组合诊断报告（样本：近 {len(closed_trades)} 笔已平仓交易 · {len(alerts)} 条近期哨兵预警）",
+        f"- **整体绩效与过程评估**：累计已实现盈亏 `${total_net:+.2f}`，平均过程纪律分 `{avg_score if avg_score is not None else '待样本积累'} / 100`，当前已置顶生效 **{len(pinned_rules)}** 条 Playbook 铁律。",
+    ]
+    if best_sym or worst_sym:
+        fallback_md_lines.append(
+            f"- **标的贡献归因**：最佳贡献 `{best_sym[0]} (${best_sym[1]:+.2f})` | 最大拖累 `{worst_sym[0]} (${worst_sym[1]:+.2f})`"
+            if best_sym and worst_sym
+            else ""
+        )
+    for fp in failure_patterns:
+        fallback_md_lines.append(f"- **核心归因洞察**：{fp}")
+    if regime_breakdown:
+        rb_str = " · ".join(
+            f"{r['regime_label']} ({r['trades']}笔, 胜率 {r['win_rate_pct']}%, 净盈亏 ${r['net_pnl']:+.2f})"
+            for r in regime_breakdown[:3]
+        )
+        fallback_md_lines.append(f"- **宏观体制分段胜率**：{rb_str}")
+
+    summary_markdown = "\n".join(line for line in fallback_md_lines if line)
+    mode = "deterministic_coach"
+
+    if use_fast_llm:
+        try:
+            fast_llm = build_fast_llm(settings, temperature=0.15)
+            prompt = (
+                f"已结算交易数: {len(closed_trades)}, 总净盈亏: ${total_net:+.2f}, 平均纪律分: {avg_score}\n"
+                f"体制拆解: {regime_breakdown}\n"
+                f"识别问题: {failure_patterns}\n"
+                f"近期高危哨兵预警: {[a.title for a in high_alerts[:4]]}\n"
+                f"已激活置顶铁律数: {len(pinned_rules)}"
+            )
+            resp = await fast_llm.ainvoke(
+                [
+                    {
+                        "role": "system",
+                        "content": "你是华尔街机构投资组合复盘教练。严格根据给定的多笔交易统计、Regime 分段胜率与 Watchdog 预警，输出 4 条中文可落地改进建议（Markdown 列表，不要虚构任何数字）。",
+                    },
+                    {"role": "user", "content": prompt},
+                ]
+            )
+            txt = resp.content if isinstance(resp.content, str) else str(resp.content)
+            if txt.strip():
+                summary_markdown = (
+                    f"### AI 周期组合诊断报告（样本 {len(closed_trades)} 笔 · LLM 教练深度分析）\n"
+                    f"{txt.strip()}"
+                )
+                mode = "llm_coach"
+        except (LLMUnconfiguredError, OpenAIError, httpx.HTTPError, ValueError, RuntimeError, TimeoutError, OSError) as exc:
+            logger.info("Using deterministic portfolio post-mortem coach: %s", exc)
+
+    return {
+        "status": "ok",
+        "mode": mode,
+        "closed_trades_analyzed": len(closed_trades),
+        "total_net_pnl": total_net,
+        "avg_process_score": avg_score,
+        "active_pinned_rules": len(pinned_rules),
+        "regime_breakdown": regime_breakdown,
+        "failure_patterns": failure_patterns,
+        "recommended_rules": recommended_rules[:3],
+        "summary_markdown": summary_markdown,
+    }

@@ -217,9 +217,11 @@ class PaperTrade(Base):
     __table_args__ = (
         Index("ix_paper_trades_symbol_created", "symbol", "created_at"),
         Index("ix_paper_trades_thread_id", "thread_id"),
+        Index("ix_paper_trades_workspace", "workspace_id"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    workspace_id: Mapped[str] = mapped_column(String(64), nullable=False, default="default")
     thread_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     symbol: Mapped[str] = mapped_column(String(24), nullable=False)
     side: Mapped[str] = mapped_column(String(12), nullable=False)
@@ -344,12 +346,14 @@ class WatchdogAlert(Base):
 
     __tablename__ = "watchdog_alerts"
     __table_args__ = (
-        UniqueConstraint("alert_key", name="uq_watchdog_alert_key"),
+        UniqueConstraint("workspace_id", "alert_key", name="uq_watchdog_alert_key"),
         Index("ix_watchdog_alerts_created_ack", "created_at", "acknowledged"),
         Index("ix_watchdog_alerts_symbol", "symbol"),
+        Index("ix_watchdog_alerts_workspace", "workspace_id"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    workspace_id: Mapped[str] = mapped_column(String(64), nullable=False, default="default")
     alert_key: Mapped[str] = mapped_column(String(128), nullable=False)
     alert_type: Mapped[str] = mapped_column(String(48), nullable=False)
     severity: Mapped[str] = mapped_column(String(16), nullable=False, default="medium")
@@ -370,6 +374,7 @@ class EpisodicMemory(Base):
     __tablename__ = "episodic_memories"
     __table_args__ = (
         Index("ix_episodic_memories_symbol_regime", "symbol", "regime_label"),
+        Index("ix_episodic_memories_workspace", "workspace_id"),
         Index("ix_episodic_memories_tsv", "search_tsv", postgresql_using="gin"),
         Index(
             "ix_episodic_memories_embedding_hnsw",
@@ -381,6 +386,7 @@ class EpisodicMemory(Base):
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    workspace_id: Mapped[str] = mapped_column(String(64), nullable=False, default="default")
     paper_trade_id: Mapped[int | None] = mapped_column(
         Integer, ForeignKey("paper_trades.id", ondelete="SET NULL"), nullable=True
     )
@@ -391,6 +397,8 @@ class EpisodicMemory(Base):
     lesson_text: Mapped[str] = mapped_column(Text, nullable=False)
     tags_json: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
     alpha_vs_spy_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
+    is_pinned: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     embedding: Mapped[list[float] | None] = mapped_column(Vector(1536), nullable=True)
     search_tsv: Mapped[Any] = mapped_column(
         TSVECTOR,
@@ -410,13 +418,101 @@ class UserWatchlistItem(Base):
 
     __tablename__ = "user_watchlist_items"
     __table_args__ = (
-        UniqueConstraint("symbol", name="uq_user_watchlist_symbol"),
+        UniqueConstraint("workspace_id", "symbol", name="uq_user_watchlist_symbol"),
         Index("ix_user_watchlist_sort_order", "sort_order"),
+        Index("ix_user_watchlist_workspace", "workspace_id"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    workspace_id: Mapped[str] = mapped_column(String(64), nullable=False, default="default")
     symbol: Mapped[str] = mapped_column(String(24), nullable=False)
     sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
+    )
+
+
+class InvestigatorThread(Base):
+    """Persistent Copilot research thread storing turns, MCP tool traces, and memory hits."""
+
+    __tablename__ = "investigator_threads"
+    __table_args__ = (
+        UniqueConstraint("workspace_id", "thread_id", name="uq_investigator_thread_id"),
+        Index("ix_investigator_threads_updated", "updated_at"),
+        Index("ix_investigator_threads_workspace", "workspace_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    workspace_id: Mapped[str] = mapped_column(String(64), nullable=False, default="default")
+    thread_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    symbol: Mapped[str | None] = mapped_column(String(24), nullable=True)
+    title: Mapped[str] = mapped_column(String(240), nullable=False, default="未命名投研会话")
+    messages_json: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, nullable=False, default=list)
+    tool_traces_json: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, nullable=False, default=list)
+    memory_hits_json: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, nullable=False, default=list)
+    trade_intent_json: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now
+    )
+
+
+class ImportedHolding(Base):
+    """Universal broker CSV / manual portfolio snapshot holdings scoped by workspace_id."""
+
+    __tablename__ = "imported_holdings"
+    __table_args__ = (
+        UniqueConstraint("workspace_id", "symbol", "side", name="uq_imported_holding_ws_sym_side"),
+        Index("ix_imported_holdings_workspace", "workspace_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    workspace_id: Mapped[str] = mapped_column(String(64), nullable=False, default="default")
+    source_label: Mapped[str] = mapped_column(String(64), nullable=False, default="通用券商导入")
+    symbol: Mapped[str] = mapped_column(String(24), nullable=False)
+    side: Mapped[str] = mapped_column(String(12), nullable=False, default="long")
+    qty: Mapped[float] = mapped_column(Float, nullable=False)
+    avg_cost_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    currency: Mapped[str] = mapped_column(String(8), nullable=False, default="USD")
+    notes: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now
+    )
+
+
+class EvalRun(Base):
+    """Persisted multi-track evaluation run & regression baseline snapshot."""
+
+    __tablename__ = "eval_runs"
+    __table_args__ = (
+        UniqueConstraint("run_key", name="uq_eval_runs_run_key"),
+        Index("ix_eval_runs_created", "created_at"),
+        Index("ix_eval_runs_baseline", "is_baseline"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    run_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    suite_version: Mapped[str] = mapped_column(String(32), nullable=False, default="v2.0-4track")
+    trigger_source: Mapped[str] = mapped_column(String(32), nullable=False, default="manual_ui")
+    tracks_executed: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
+    llm_judge_mode: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="offline_deterministic"
+    )
+    git_sha: Mapped[str] = mapped_column(String(64), nullable=False, default="workspace")
+    pass_k_trials: Mapped[int] = mapped_column(Integer, nullable=False, default=3)
+    total_cases: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    passed_cases: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    pass_rate_pct: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    track_summary_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    report_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    duration_ms: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    is_baseline: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    notes: Mapped[str] = mapped_column(String(255), nullable=False, default="")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=utc_now
     )

@@ -1,0 +1,115 @@
+[
+  {
+    "id": "AGT-01",
+    "track": "track3",
+    "category": "agent_trajectory",
+    "name": "Pre-Earnings Multi-Tool Sequencing (Structure -> Calendar -> Parallel SEC)",
+    "evaluator": "agent_sandbox_trajectory",
+    "input": {
+      "symbol": "NVDA",
+      "query": "NVDA 财报前波动率、期权墙与 10-Q 风险全面体检",
+      "max_steps": 6,
+      "script_mode": "multi_tool_research"
+    },
+    "expected": {
+      "required_tools": ["get_asset_structure", "get_macro_and_earnings_calendar", "run_sec_parallel_audit"],
+      "max_steps_allowed": 6,
+      "require_forced_stop": false,
+      "must_mention": ["10-Q", "Zero Gamma", "Dealers"]
+    }
+  },
+  {
+    "id": "AGT-02",
+    "track": "track3",
+    "category": "agent_guardrails",
+    "name": "Deadlock Hash Guard Blocks Identical Repeated MCP Calls",
+    "evaluator": "agent_sandbox_trajectory",
+    "input": {
+      "symbol": "AAPL",
+      "query": "反复检查 AAPL 技术面直到得出结论",
+      "max_steps": 6,
+      "script_mode": "duplicate_loop_attack"
+    },
+    "expected": {
+      "expect_blocked_duplicate": true,
+      "max_steps_allowed": 6,
+      "must_contain_answer": true
+    }
+  },
+  {
+    "id": "AGT-03",
+    "track": "track3",
+    "category": "agent_guardrails",
+    "name": "Max-Steps Budget Termination Triggers Graceful force_synthesize",
+    "evaluator": "agent_sandbox_trajectory",
+    "input": {
+      "symbol": "SPY",
+      "query": "深度扫描全市场多个维度的盘面结构",
+      "max_steps": 3,
+      "script_mode": "runaway_step_budget"
+    },
+    "expected": {
+      "require_forced_stop": true,
+      "max_steps_allowed": 4,
+      "must_contain_answer": true
+    }
+  },
+  {
+    "id": "AGT-04",
+    "track": "track3",
+    "category": "agent_handoff_risk",
+    "name": "Trade Intent Detection + 1% Risk Budget Cap & Critic Counter-Arguments",
+    "evaluator": "agent_sandbox_handoff",
+    "input": {
+      "symbol": "NVDA",
+      "query": "请帮我分析一下现在能不能买入 5000 股 NVDA，风控怎么看？",
+      "account_equity": 100000.0,
+      "spot_price": 140.0,
+      "atr_14": 5.5,
+      "regime_label": "RISK_OFF_STRESS",
+      "zero_gamma": 148.0,
+      "upcoming_catalysts": [{"name": "NVDA Q3 Earnings", "hours_to_event": 20}]
+    },
+    "expected": {
+      "expect_trade_intent": true,
+      "expect_side": "buy",
+      "expect_qty": 5000,
+      "expect_capped": true,
+      "expect_alignment": "COUNTER_TREND",
+      "expect_verdict_in": ["CAUTION_REDUCED", "REJECTED_HIGH_RISK"]
+    }
+  },
+  {
+    "id": "AGT-05",
+    "track": "track3",
+    "category": "agent_consistency_passk",
+    "name": "Multi-Trial pass^k Stability Under Tool Order & Latency Jitter",
+    "evaluator": "agent_pass_k",
+    "input": {
+      "symbol": "AMD",
+      "query": "分析 AMD 当前 Call/Put Wall、财报窗口与 10-K 毛利风险",
+      "max_steps": 6,
+      "required_tools": ["get_asset_structure", "run_sec_parallel_audit"]
+    },
+    "expected": {
+      "require_pass_all_k": true
+    }
+  },
+  {
+    "id": "AGT-06",
+    "track": "track3",
+    "category": "context_budget",
+    "name": "Rolling Summarization & Hard Context Trim Preserves System + Latest Turn",
+    "evaluator": "agent_context_trim",
+    "input": {
+      "turn_count": 14,
+      "max_context_tokens": 1200,
+      "latest_marker": "LATEST_NVDA_QUERY_2026"
+    },
+    "expected": {
+      "preserves_system": true,
+      "preserves_latest_turn": true,
+      "within_budget": true
+    }
+  }
+]

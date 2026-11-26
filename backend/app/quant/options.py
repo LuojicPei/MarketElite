@@ -3,6 +3,7 @@ from __future__ import annotations
 import itertools
 import math
 from dataclasses import asdict, dataclass
+from typing import Any
 
 
 def _norm_pdf(x: float) -> float:
@@ -39,6 +40,12 @@ class OptionContractInput:
     iv: float | None = None
     time_to_expiry_years: float | None = None
     volume: int | None = None
+    expiration_date: str | None = None
+    dte: int | None = None
+    delta: float | None = None
+    theta: float | None = None
+    vega: float | None = None
+    last_price: float | None = None
 
 
 @dataclass(frozen=True)
@@ -236,3 +243,279 @@ def compute_estimated_gex(
         assumption_label=assumption,
         strike_profile=[asdict(r) for r in top_profile],
     )
+
+
+def _contract_dte(c: OptionContractInput) -> int:
+    if c.dte is not None:
+        return max(0, int(c.dte))
+    if c.time_to_expiry_years is not None:
+        return max(0, round(c.time_to_expiry_years * 365.0))
+    return 14
+
+
+def _select_bucket_contracts(
+    contracts: list[OptionContractInput],
+    bucket: str,
+) -> tuple[list[OptionContractInput], dict[str, int]]:
+    norm = bucket.lower().strip()
+    c_0dte = [c for c in contracts if _contract_dte(c) <= 2]
+    c_weekly = [c for c in contracts if _contract_dte(c) <= 8]
+    c_monthly = [c for c in contracts if _contract_dte(c) > 8]
+    counts = {
+        "all": len(contracts),
+        "0dte": len(c_0dte),
+        "weekly": len(c_weekly),
+        "monthly": len(c_monthly),
+    }
+    if norm == "0dte":
+        return c_0dte or c_weekly, counts
+    if norm == "weekly":
+        return c_weekly or contracts, counts
+    if norm == "monthly":
+        return c_monthly or contracts, counts
+    return contracts, counts
+
+
+def _compute_max_pain(
+    contracts: list[OptionContractInput],
+    spot_price: float,
+) -> float | None:
+    """Find candidate settlement strike minimizing total Call + Put intrinsic payout."""
+    priced_strikes = sorted(
+        {
+            round(float(c.strike), 2)
+            for c in contracts
+            if c.open_interest > 0 and c.strike > 0 and (spot_price <= 0 or abs(c.strike - spot_price) <= spot_price * 0.25)
+        }
+    )
+    if not priced_strikes:
+        return None
+    best_strike: float | None = None
+    best_payout = float("inf")
+    for target in priced_strikes:
+        payout = 0.0
+        for c in contracts:
+            if c.open_interest <= 0 or c.strike <= 0:
+                continue
+            if c.option_type.lower() == "call" and target > c.strike:
+                payout += (target - c.strike) * c.open_interest * 100.0
+            elif c.option_type.lower() == "put" and target < c.strike:
+                payout += (c.strike - target) * c.open_interest * 100.0
+        if payout < best_payout:
+            best_payout = payout
+            best_strike = target
+    return best_strike
+
+
+def compute_options_radar(
+    symbol: str,
+    spot_price: float,
+    contracts: list[OptionContractInput],
+    *,
+    bucket: str = "all",
+    max_profile_strikes: int = 34,
+) -> dict[str, Any]:
+    """Compute panoramic options dealer positioning, Max Pain, Expected Move, Skew & Unusual Flow."""
+    sym = symbol.upper().strip()
+    filtered, bucket_counts = _select_bucket_contracts(contracts, bucket)
+    gex_res = compute_estimated_gex(
+        sym,
+        spot_price,
+        filtered,
+        max_profile_strikes=max_profile_strikes,
+    )
+
+    # Anchor nearest active expiry in the selected bucket for Max Pain & Expected Move
+    expiries = sorted(
+        {( _contract_dte(c), c.expiration_date ) for c in filtered if c.expiration_date}
+    )
+    anchor_dte = expiries[0][0] if expiries else (min((_contract_dte(c) for c in filtered), default=5) or 5)
+    anchor_expiry = expiries[0][1] if expiries else None
+    anchor_contracts = (
+        [c for c in filtered if c.expiration_date == anchor_expiry]
+        if anchor_expiry
+        else filtered
+    )
+
+    max_pain = _compute_max_pain(anchor_contracts or filtered, spot_price)
+
+    # ATM IV & Expected Move
+    atm_ivs = [
+        float(c.iv)
+        for c in (anchor_contracts or filtered)
+        if c.iv is not None and 0.02 < float(c.iv) < 3.5 and spot_price > 0 and abs(c.strike - spot_price) / spot_price <= 0.025
+    ]
+    if not atm_ivs:
+        atm_ivs = [
+            float(c.iv)
+            for c in filtered
+            if c.iv is not None and 0.02 < float(c.iv) < 3.5 and spot_price > 0 and abs(c.strike - spot_price) / spot_price <= 0.05
+        ]
+    atm_iv = (sum(atm_ivs) / len(atm_ivs)) if atm_ivs else None
+    atm_iv_pct = round(atm_iv * 100.0, 2) if atm_iv is not None else None
+
+    eff_dte = max(1, anchor_dte)
+    if atm_iv is not None and spot_price > 0:
+        expected_move_abs = round(spot_price * atm_iv * math.sqrt(eff_dte / 365.0), 2)
+        expected_move_pct = round((expected_move_abs / spot_price) * 100.0, 2)
+        expected_low = round(spot_price - expected_move_abs, 2)
+        expected_high = round(spot_price + expected_move_abs, 2)
+    else:
+        expected_move_abs = None
+        expected_move_pct = None
+        expected_low = None
+        expected_high = None
+
+    # 25-Delta IV Skew (OTM Put IV minus OTM Call IV in percentage points)
+    put_25d_ivs = [
+        float(c.iv) * 100.0
+        for c in filtered
+        if c.option_type.lower() == "put"
+        and c.iv is not None
+        and 0.02 < float(c.iv) < 3.5
+        and (
+            (c.delta is not None and -0.38 <= float(c.delta) <= -0.15)
+            or (c.delta is None and spot_price > 0 and 0.90 * spot_price <= c.strike <= 0.97 * spot_price)
+        )
+    ]
+    call_25d_ivs = [
+        float(c.iv) * 100.0
+        for c in filtered
+        if c.option_type.lower() == "call"
+        and c.iv is not None
+        and 0.02 < float(c.iv) < 3.5
+        and (
+            (c.delta is not None and 0.15 <= float(c.delta) <= 0.38)
+            or (c.delta is None and spot_price > 0 and 1.03 * spot_price <= c.strike <= 1.10 * spot_price)
+        )
+    ]
+    iv_skew_25d = (
+        round((sum(put_25d_ivs) / len(put_25d_ivs)) - (sum(call_25d_ivs) / len(call_25d_ivs)), 2)
+        if put_25d_ivs and call_25d_ivs
+        else None
+    )
+
+    # Aggregate Strike OI + Volume + IV Smile onto gex_res.strike_profile
+    total_call_vol = 0
+    total_put_vol = 0
+    strike_agg: dict[float, dict[str, Any]] = {}
+    for c in filtered:
+        s_key = round(float(c.strike), 4)
+        vol = int(c.volume or 0)
+        slot = strike_agg.setdefault(
+            s_key,
+            {"call_vol": 0, "put_vol": 0, "call_ivs": [], "put_ivs": []},
+        )
+        if c.option_type.lower() == "call":
+            total_call_vol += vol
+            slot["call_vol"] += vol
+            if c.iv is not None and 0.02 < float(c.iv) < 3.5:
+                slot["call_ivs"].append(float(c.iv) * 100.0)
+        elif c.option_type.lower() == "put":
+            total_put_vol += vol
+            slot["put_vol"] += vol
+            if c.iv is not None and 0.02 < float(c.iv) < 3.5:
+                slot["put_ivs"].append(float(c.iv) * 100.0)
+
+    enriched_profile: list[dict[str, Any]] = []
+    for row in gex_res.strike_profile:
+        s_key = round(float(row["strike"]), 4)
+        extra = strike_agg.get(s_key, {})
+        c_ivs = extra.get("call_ivs") or []
+        p_ivs = extra.get("put_ivs") or []
+        enriched_profile.append(
+            {
+                **row,
+                "call_vol": int(extra.get("call_vol", 0)),
+                "put_vol": int(extra.get("put_vol", 0)),
+                "call_iv": round(sum(c_ivs) / len(c_ivs), 2) if c_ivs else None,
+                "put_iv": round(sum(p_ivs) / len(p_ivs), 2) if p_ivs else None,
+            }
+        )
+
+    put_call_vol_ratio = round(total_put_vol / total_call_vol, 4) if total_call_vol > 0 else None
+
+    # Unusual Options Flow Radar (Vol > OI & Notional Premium)
+    flow_candidates: list[dict[str, Any]] = []
+    for c in filtered:
+        vol = int(c.volume or 0)
+        if vol < 10:
+            continue
+        oi = max(int(c.open_interest or 0), 1)
+        vol_oi = round(vol / oi, 2)
+        price = float(c.last_price) if c.last_price is not None and c.last_price > 0 else 0.0
+        est_prem = round(vol * price * 100.0, 0) if price > 0 else None
+        # Prioritize fresh sweeps (Vol > OI) with meaningful notional size
+        score = min(vol_oi, 20.0) * math.log1p(vol) * (1.5 if vol > oi else 0.6)
+        flow_candidates.append(
+            {
+                "contract_symbol": c.contract_symbol,
+                "option_type": c.option_type.lower(),
+                "strike": round(float(c.strike), 2),
+                "expiration_date": c.expiration_date,
+                "dte": _contract_dte(c),
+                "volume": vol,
+                "open_interest": int(c.open_interest or 0),
+                "vol_oi_ratio": vol_oi,
+                "iv_pct": round(float(c.iv) * 100.0, 1) if c.iv is not None else None,
+                "delta": round(float(c.delta), 2) if c.delta is not None else None,
+                "last_price": round(price, 2) if price > 0 else None,
+                "est_premium_usd": est_prem,
+                "_score": score,
+            }
+        )
+    flow_candidates.sort(key=lambda item: float(item["_score"]), reverse=True)
+    unusual_flow = [
+        {k: v for k, v in item.items() if k != "_score"}
+        for item in flow_candidates[:8]
+    ]
+
+    if gex_res.net_gex >= 0:
+        dealer_regime = "positive_pinning"
+        dealer_regime_zh = "正 Gamma 护盘模式：做市商逢跌买入、逢涨卖出，盘面易缩波钉盘"
+    else:
+        dealer_regime = "negative_amplifying"
+        dealer_regime_zh = "负 Gamma 放大模式：做市商被迫追涨杀跌，突破后极易加速单边"
+
+    summary_parts: list[str] = []
+    if max_pain is not None:
+        summary_parts.append(f"近期最大痛点 ${max_pain:.0f}")
+    if gex_res.call_wall is not None and gex_res.put_wall is not None:
+        summary_parts.append(f"核心箱体 Put墙 ${gex_res.put_wall:.0f} ~ Call墙 ${gex_res.call_wall:.0f}")
+    if expected_low is not None and expected_high is not None and expected_move_pct is not None:
+        summary_parts.append(f"{eff_dte}日隐含波动区间 ${expected_low:.1f}–${expected_high:.1f} (±{expected_move_pct:.1f}%)")
+    if iv_skew_25d is not None and iv_skew_25d >= 4.0:
+        summary_parts.append(f"看跌保护偏贵(Skew +{iv_skew_25d:.1f}%)")
+    battle_summary_zh = "；".join(summary_parts) if summary_parts else dealer_regime_zh
+
+    return {
+        "symbol": sym,
+        "bucket": bucket.lower().strip(),
+        "bucket_counts": bucket_counts,
+        "spot_price": gex_res.spot_price,
+        "anchor_expiry": anchor_expiry,
+        "anchor_dte": eff_dte,
+        "net_gex": gex_res.net_gex,
+        "call_wall": gex_res.call_wall,
+        "put_wall": gex_res.put_wall,
+        "zero_gamma": gex_res.zero_gamma,
+        "max_pain": max_pain,
+        "atm_iv_pct": atm_iv_pct,
+        "expected_move_abs": expected_move_abs,
+        "expected_move_pct": expected_move_pct,
+        "expected_low": expected_low,
+        "expected_high": expected_high,
+        "iv_skew_25d": iv_skew_25d,
+        "put_call_ratio": gex_res.put_call_ratio,
+        "put_call_vol_ratio": put_call_vol_ratio,
+        "total_call_oi": gex_res.total_call_oi,
+        "total_put_oi": gex_res.total_put_oi,
+        "total_call_vol": total_call_vol,
+        "total_put_vol": total_put_vol,
+        "contracts_analyzed": gex_res.contracts_analyzed,
+        "dealer_regime": dealer_regime,
+        "dealer_regime_zh": dealer_regime_zh,
+        "battle_summary_zh": battle_summary_zh,
+        "strike_profile": enriched_profile,
+        "unusual_flow": unusual_flow,
+    }

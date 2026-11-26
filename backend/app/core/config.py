@@ -41,6 +41,11 @@ class Settings(BaseSettings):
     alpaca_api_key: str = Field(default="", repr=False)
     alpaca_secret_key: str = Field(default="", repr=False)
     alpaca_paper: bool = True
+    broker_provider: str = "auto"  # "auto" | "sandbox" | "trading212" | "alpaca"
+    trading212_api_key: str = Field(default="", repr=False)
+    trading212_api_secret: str = Field(default="", repr=False)
+    trading212_env: str = "live"  # "live" | "demo"
+    trading212_read_only: bool = True
     fred_api_key: str = Field(default="", repr=False)
     finnhub_api_key: str = Field(default="", repr=False)
     fmp_api_key: str = Field(default="", repr=False)
@@ -59,6 +64,7 @@ class Settings(BaseSettings):
     llm_embedding_api_key: str = Field(default="", repr=False)
     llm_embedding_model: str = "gemini-embedding-001"
     llm_embedding_dim: int = 1536
+    allow_server_llm_fallback: bool = False
 
     # Phase 3 Agent Safety & Rate Limits
     agent_max_steps: int = 8
@@ -66,6 +72,7 @@ class Settings(BaseSettings):
     agent_max_context_tokens: int = 14000
     guest_chat_rpm: int = 12
     admin_api_token: str = Field(default="", repr=False)
+    public_showcase_readonly: bool = False
 
     @property
     def cors_origin_list(self) -> list[str]:
@@ -86,6 +93,14 @@ class Settings(BaseSettings):
                 "requires_key": True,
                 "configured": bool(self.alpaca_api_key.strip() and self.alpaca_secret_key.strip()),
                 "mode": "Paper" if self.alpaca_paper else "Live",
+            },
+            {
+                "id": "trading212",
+                "name": "Trading212 Portfolio Sync",
+                "category": "broker",
+                "requires_key": False,
+                "configured": bool(self.trading212_api_key.strip() and self.trading212_api_secret.strip()),
+                "mode": f"{self.trading212_env.upper()} (Read-Only)" if self.trading212_read_only else self.trading212_env.upper(),
             },
             {
                 "id": "fred",

@@ -77,6 +77,10 @@ async def test_mcp_tools_are_strictly_read_only() -> None:
         "get_asset_structure",
         "get_macro_and_earnings_calendar",
         "get_sec_filings_context",
+        "get_account_positions_snapshot",
+        "get_watchlist_matrix",
+        "get_watchdog_and_memories",
+        "compare_assets_structure",
     }
     forbidden_terms = ("order", "trade", "buy", "sell", "execute", "submit")
     for name in names:
@@ -196,7 +200,7 @@ def test_agent_status_and_reentry_lock_409(monkeypatch) -> None:
         assert status_resp.status_code == 200
         s_body = status_resp.json()
         assert s_body["status"] == "llm_key_required"
-        assert len(s_body["mcp_tools"]) == 4
+        assert len(s_body["mcp_tools"]) == 8
         assert s_body["sec_cached_filings"] == 2
 
         # Hold thread lock manually -> concurrent request must receive 409 Conflict
@@ -226,3 +230,111 @@ def test_agent_status_and_reentry_lock_409(monkeypatch) -> None:
         prod_status = client.get("/api/agent/status")
         assert prod_status.status_code == 200
         assert prod_status.json()["phoenix_ui_url"] is None
+
+
+def test_byok_header_isolation_and_test_connection(monkeypatch) -> None:
+    # Server has an internal .env key, yet allow_server_llm_fallback=False isolates guests
+    server_settings = Settings(
+        _env_file=None,
+        app_env="production",
+        llm_pro_api_key="server-secret-key",
+        llm_fast_api_key="server-secret-fast",
+        allow_server_llm_fallback=False,
+    )
+    monkeypatch.setattr("app.api.agent.get_settings", lambda: server_settings)
+
+    class _CountResult:
+        def scalar_one(self) -> int:
+            return 1
+
+    class _CountSession:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def execute(self, stmt):
+            return _CountResult()
+
+    app = create_app()
+    fake_redis = InMemoryFakeRedis()
+    with TestClient(app) as client:
+        app.state.infra.redis = fake_redis
+        app.state.session_factory = lambda: _CountSession()
+
+        # Without BYOK headers, server key is NOT exposed to unauthenticated guest
+        guest_status = client.get("/api/agent/status")
+        assert guest_status.status_code == 200
+        assert guest_status.json()["status"] == "llm_key_required"
+        assert guest_status.json()["key_source"] == "none"
+
+        # With valid BYOK headers, status flips to ready using caller's model
+        byok_status = client.get(
+            "/api/agent/status",
+            headers={
+                "X-LLM-Api-Key": "sk-user-byok-123",
+                "X-LLM-Base-Url": "https://api.deepseek.com/v1",
+                "X-LLM-Pro-Model": "deepseek-reasoner",
+                "X-LLM-Fast-Model": "deepseek-chat",
+            },
+        )
+        assert byok_status.status_code == 200
+        b_body = byok_status.json()
+        assert b_body["status"] == "ready"
+        assert b_body["key_source"] == "byok"
+        assert b_body["llm_pro_model"] == "deepseek-reasoner"
+        assert b_body["llm_fast_model"] == "deepseek-chat"
+
+        # Production SSRF block rejects metadata / localhost Base URLs
+        ssrf_status = client.post(
+            "/api/agent/test-connection",
+            json={
+                "api_key": "sk-user-byok-123",
+                "base_url": "http://169.254.169.254/latest/meta-data",
+                "model": "deepseek-chat",
+            },
+        )
+        assert ssrf_status.status_code == 400
+
+        async def _mock_test_conn(**kwargs):
+            return {
+                "ok": True,
+                "latency_ms": 112,
+                "model": kwargs["model"],
+                "base_url": kwargs["base_url"],
+                "reply_preview": "OK",
+            }
+
+        monkeypatch.setattr("app.api.agent.test_llm_connection", _mock_test_conn)
+        ok_test = client.post(
+            "/api/agent/test-connection",
+            json={
+                "api_key": "sk-user-byok-123",
+                "base_url": "https://api.deepseek.com/v1",
+                "model": "deepseek-chat",
+            },
+        )
+        assert ok_test.status_code == 200
+        assert ok_test.json()["ok"] is True
+        assert ok_test.json()["model"] == "deepseek-chat"
+
+        async def _mock_fetch_models(**kwargs):
+            return [
+                {"id": "gemini-4-carbon", "owned_by": "google", "name": "Gemini 4 Carbon"},
+                {"id": "gemini-3.8-flash", "owned_by": "google", "name": "Gemini 3.8 Flash"},
+            ]
+
+        monkeypatch.setattr("app.api.agent.fetch_available_models", _mock_fetch_models)
+        models_resp = client.post(
+            "/api/agent/models",
+            json={
+                "api_key": "AIza-user-byok",
+                "base_url": "https://generativelanguage.googleapis.com/v1beta/openai/",
+            },
+        )
+        assert models_resp.status_code == 200
+        m_body = models_resp.json()
+        assert m_body["ok"] is True
+        assert m_body["count"] == 2
+        assert m_body["models"][0]["id"] == "gemini-4-carbon"
