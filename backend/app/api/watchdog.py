@@ -3,7 +3,6 @@ from __future__ import annotations
 import importlib.util
 import json
 import logging
-from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Header, HTTPException, Query, Request
@@ -241,9 +240,10 @@ async def recall_episodic_memories(
     return {"count": len(items), "memories": items}
 
 
-_REPO_ROOT = Path(__file__).resolve().parents[3]
-_EVAL_SCRIPT = _REPO_ROOT / "evals" / "run_eval.py"
-_EVAL_REPORT = _REPO_ROOT / "evals" / "latest_report.json"
+from app.services.eval_engine import _EVALS_DIR as _SHARED_EVALS_DIR
+
+_EVAL_SCRIPT = _SHARED_EVALS_DIR / "run_eval.py"
+_EVAL_REPORT = _SHARED_EVALS_DIR / "latest_report.json"
 
 
 def _run_eval_suite() -> dict[str, Any]:

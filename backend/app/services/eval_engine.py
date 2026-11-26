@@ -39,8 +39,23 @@ from app.services.llm_router import (
 
 logger = logging.getLogger(__name__)
 
-_REPO_ROOT = Path(__file__).resolve().parents[3]
-_EVALS_DIR = _REPO_ROOT / "evals"
+def _resolve_evals_dir() -> Path:
+    """Locate evals directory in both repo dev layout and containerized prod mounts."""
+    env_dir = os.environ.get("MARKETELITE_EVALS_DIR", "").strip()
+    if env_dir:
+        p = Path(env_dir)
+        if p.exists():
+            return p
+    repo_candidate = Path(__file__).resolve().parents[3] / "evals"
+    if (repo_candidate / "datasets").exists():
+        return repo_candidate
+    for container_candidate in (Path("/evals"), Path("/app/evals")):
+        if (container_candidate / "datasets").exists():
+            return container_candidate
+    return repo_candidate
+
+
+_EVALS_DIR = _resolve_evals_dir()
 _TRACK1_SCRIPT = _EVALS_DIR / "run_eval.py"
 _LATEST_REPORT_PATH = _EVALS_DIR / "latest_report.json"
 
@@ -84,7 +99,7 @@ def _resolve_git_sha() -> str:
     try:
         out = subprocess.check_output(
             ["git", "rev-parse", "--short", "HEAD"],
-            cwd=str(_REPO_ROOT),
+            cwd=str(_EVALS_DIR.parent),
             stderr=subprocess.DEVNULL,
             timeout=2.0,
         )
