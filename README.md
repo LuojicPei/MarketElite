@@ -12,7 +12,7 @@
 
 </div>
 
-> **定位声明**：MarketElite 并非“带 K 线图表的套壳 ChatGPT”，而是一套由 **「1 个零 Token 确定性数据底座 + 3 个职责隔离的闭环自治 Agent + 4 层 DataOps 与 4-Track 全栈评测治理中台」** 构成的生产级金融投研工作台。
+> **本项目说明**：MarketElite 是一套由 **「1 个零 Token 确定性数据底座 + 3 个职责隔离的闭环自治 Agent + 4 层 DataOps 与 4-Track 全栈评测治理中台」** 构成的金融投研工作台。
 
 ---
 
